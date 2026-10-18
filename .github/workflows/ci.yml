@@ -16,6 +16,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - run: npm run build
+      - run: npm run compile
       # The published package must load with plain Node and no dev dependencies.
       - run: node -e "import('./lib/index.js').then(m => { if (typeof m.apply !== 'function') process.exit(1) })"

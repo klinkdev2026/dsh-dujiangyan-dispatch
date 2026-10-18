@@ -325,12 +325,12 @@ git clone https://github.com/klinkdev2026/dsh-dujiangyan-dispatch.git
 cd dsh-dujiangyan-dispatch
 npm install
 npm test          # unit tests + end-to-end tests against a fake host
-npm run build     # writes lib/
+npm run compile     # writes lib/
 # quit the desktop app, then install the checkout with link: (use the desktop's bundled dsh)
 dsh plugin --profile desktop add "link:$(pwd)"
 ```
 
-After changing code, run `npm run build` again and restart the desktop app. Issues and PRs are welcome.
+After changing code, run `npm run compile` again and restart the desktop app. Issues and PRs are welcome.
 
 ## Acknowledgements
 

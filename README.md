@@ -327,12 +327,12 @@ git clone https://github.com/klinkdev2026/dsh-dujiangyan-dispatch.git
 cd dsh-dujiangyan-dispatch
 npm install
 npm test          # 单元测试 + 模拟宿主的端到端测试
-npm run build     # 输出到 lib/
+npm run compile     # 输出到 lib/
 # 退出桌面版后，用 link: 方式安装本地源码（dsh 用桌面版自带的那个）
 dsh plugin --profile desktop add "link:$(pwd)"
 ```
 
-修改代码后重新 `npm run build`，再重启桌面版生效。欢迎提 issue 和 PR。
+修改代码后重新 `npm run compile`，再重启桌面版生效。欢迎提 issue 和 PR。
 
 ## 致谢
 

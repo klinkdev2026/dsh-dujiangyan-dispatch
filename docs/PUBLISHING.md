@@ -19,7 +19,7 @@
 
 ## 发布清单
 
-1. 改代码后执行 `npm run typecheck && npm test && npm run build`，**把 `lib/` 一起提交**（Git 安装依赖它）。
+1. 改代码后执行 `npm run typecheck && npm test && npm run compile`，**把 `lib/` 一起提交**（Git 安装依赖它）。
 2. 更新 `CHANGELOG.md`、`package.json` 和 `src/mcp.ts` 里的版本号。
 3. 推送到 GitHub，确认 CI 在 Windows、macOS、Linux 上都通过。
 4. 发布 npm：预发布版本用 `npm publish --tag next`，正式版本去掉 `--tag next`。`prepublishOnly` 会先跑类型检查、测试和构建。
