@@ -28,7 +28,14 @@ test('approval: first decision wins, later ones are refused', async () => {
 test('approval: timeout and abort', async () => {
   const q = new ApprovalQueue(new EventLog(undefined), () => {})
   const base = { sessionId: 's', tool: 't', summary: '', rule: 'r', reason: '', cwd: '/', origin: 'pre-execute' as const }
-  assert.deepEqual(await q.request(base, 10), { kind: 'timeout' })
+  // The approval timer is unref'd so a pending approval never keeps the host alive;
+  // hold the loop open here, or Node 22's runner ends the file before the timeout fires.
+  const keepAlive = setInterval(() => {}, 1000)
+  try {
+    assert.deepEqual(await q.request(base, 10), { kind: 'timeout' })
+  } finally {
+    clearInterval(keepAlive)
+  }
   const ctrl = new AbortController()
   const p = q.request(base, 60_000, ctrl.signal)
   ctrl.abort()
