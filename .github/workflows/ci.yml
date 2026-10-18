@@ -17,5 +17,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run compile
+      # lib/ is committed for Git installs; it must match the sources.
+      - run: git diff --exit-code -- lib
       # The published package must load with plain Node and no dev dependencies.
       - run: node -e "import('./lib/index.js').then(m => { if (typeof m.apply !== 'function') process.exit(1) })"
