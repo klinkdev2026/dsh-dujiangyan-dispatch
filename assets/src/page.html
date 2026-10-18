@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{--dsw-alias-label-primary:#e7ebf0;--dsw-alias-label-secondary:#8d97a5;--dsw-alias-border-l2:#2c3440;--dsw-alias-border-l1:#232a33;--dsw-alias-bg-layer-1:#161b22;--dsw-alias-bg-layer-2:#1b212a;
+--dsw-alias-state-success-primary:#3fb97a;--dsw-alias-state-warn-primary:#e3a33b;--dsw-alias-state-error-primary:#ef5b5b;--dsw-alias-state-business-primary:#4d8dff}
+html,body{margin:0;height:100%;background:linear-gradient(135deg,#0b2a3a,#07131c 60%);font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.win{position:absolute;inset:20px;border-radius:14px;overflow:hidden;background:#0f1318;box-shadow:0 20px 60px #0009;border:1px solid #26303b;display:flex;flex-direction:column}
+.bar{height:36px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#12171d;border-bottom:1px solid #222a33;color:#8d97a5;font-size:12px}
+.dot{width:11px;height:11px;border-radius:50%}
+.main{flex:1;display:flex;min-height:0}
+.side{width:56px;background:#0c1015;border-right:1px solid #1e252d;display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:16px}
+.ic{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#5d6876}
+.ic.on{background:#16324a;color:#7fb6ff}
+#root{flex:1;min-width:0;overflow:hidden}
+</style></head><body><div class="win">
+<div class="bar"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span style="margin-left:10px">DeepSeek Harness</span></div>
+<div class="main"><div class="side">
+<div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H8l-4 4z"/></svg></div>
+<div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7"/><rect x="13" y="4" width="7" height="7"/><rect x="4" y="13" width="7" height="7"/><rect x="13" y="13" width="7" height="7"/></svg></div>
+<div class="ic on"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5c3 0 4 3 9 3s6-3 9-3"/><path d="M12 8v4"/><path d="M12 12l-6 7M12 12l6 7"/><path d="M8 19h8"/></svg></div>
+<div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></div>
+</div><div id="root"></div></div></div>
+<script src="panel-demo.js"></script></body></html>

@@ -1,0 +1,79 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}
+html{background:#07141c}
+html,body{margin:0;width:1280px;height:640px;overflow:hidden;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#e8f1f6}
+.mono{font-family:"Cascadia Mono",Consolas,"Microsoft YaHei",monospace}
+h2{position:absolute;left:48px;top:30px;margin:0;font-size:26px;font-weight:700}
+h2 small{font-size:15px;color:#7fc8d8;font-weight:500;margin-left:12px}
+.box{position:absolute;border-radius:14px;background:#0e212b;outline:1px solid #22495a;padding:14px 16px}
+.box h4{margin:0 0 6px;font-size:16px}
+.box p.mono{font-size:12px;white-space:nowrap}
+.box p{margin:0;font-size:13px;color:#b9d0db;line-height:1.6}
+.k{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:6px;margin:3px 4px 0 0}
+.ok{background:#123b2a;color:#7ff0b0}.no{background:#4a1d1d;color:#ffadad}.ask{background:#4a3612;color:#ffd38a}.info{background:#13314f;color:#8cc4ff}
+svg{position:absolute;left:0;top:0}
+.note{position:absolute;font-size:12.5px;color:#8fb3c4}
+</style></head><body>
+<div id="root"></div>
+<script>
+const q = new URLSearchParams(location.search)
+const en = q.get('lang') === 'en', d = q.get('d')
+const L = (a, b) => en ? b : a
+const root = document.getElementById('root')
+const arrow = (path, color = '#5fe0c0', dash = '') => `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.2" ${dash ? `stroke-dasharray="${dash}"` : ''} marker-end="url(#m${color.slice(1)})"/>`
+const markers = ['#5fe0c0', '#ef5b5b', '#e3a33b', '#4d8dff', '#7f98bb'].map(c => `<marker id="m${c.slice(1)}" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0L9 4.5L0 9Z" fill="${c}"/></marker>`).join('')
+const kv = (cls, list) => list.map(x => `<span class="k mono ${cls}">${x}</span>`).join('')
+if (d === 'gate') {
+  root.innerHTML = `
+  <h2>${L('飞沙堰：每一次工具调用都过闸门', 'Flying Sand: every tool call passes the gate')}<small>${L('包括 agent 自己拉起的子 agent', 'including sub-agents the workers spawn')}</small></h2>
+  <svg width="1280" height="640"><defs>${markers}</defs>
+   ${arrow('M268 330 H 352')}
+   ${arrow('M560 330 C 600 330, 600 170, 650 170', '#5fe0c0')}
+   ${arrow('M560 330 H 650', '#ef5b5b')}
+   ${arrow('M560 330 C 600 330, 600 490, 650 490', '#e3a33b')}
+   ${arrow('M930 490 H 990', '#e3a33b')}
+   ${arrow('M1110 545 V 572', '#e3a33b', '5 5')}
+   ${arrow('M790 386 C 790 420, 160 420, 160 384', '#ef5b5b', '5 6')}
+  </svg>
+  <div class="box" style="left:48px;top:270px;width:220px;height:118px"><h4>${L('工人 agent', 'Worker agent')}</h4><p>${L('任意模型 · 任意数量<br>想执行一次工具调用', 'any model · any number<br>wants to run a tool call')}</p></div>
+  <div class="box" style="left:352px;top:262px;width:208px;height:136px;outline-color:#5fe0c0"><h4>${L('闸门规则', 'Gate rules')}</h4><p>${L('看工具、参数、路径和命令文本；工作区之外一律不让写', 'reads the tool, args, paths and command text; nothing outside the workspace')}</p></div>
+  <div class="box" style="left:650px;top:96px;width:280px;height:150px"><h4 style="color:#7ff0b0">${L('✓ 自动放行', '✓ Allowed')}</h4>${kv('ok', ['read / grep', L('工作区内写文件', 'write in workspace'), 'cargo / python / node', 'git status · commit', L('工作区里的脚本', 'workspace scripts')])}</div>
+  <div class="box" style="left:650px;top:268px;width:280px;height:118px"><h4 style="color:#ffadad">${L('✗ 拒绝，并告诉 agent 为什么', '✗ Denied, with the reason')}</h4>${kv('no', [L('读凭据', 'credentials'), 'git push', L('改 ACL/沙箱', 'ACL / sandbox'), L('全局安装', 'global install'), L('外传数据', 'upload')])}</div>
+  <div class="box" style="left:650px;top:410px;width:280px;height:160px"><h4 style="color:#ffd38a">${L('? 灰色地带：交给审批', '? Grey zone: escalate')}</h4>${kv('ask', ['pip / npm install', 'git clone', 'curl', L('动态执行', 'dynamic exec'), L('不认识的命令', 'unknown command')])}</div>
+  <div class="box" style="left:990px;top:420px;width:240px;height:125px"><h4>${L('AI 审批人', 'AI approver')}</h4><p>${L('Claude / Codex / Kimi…<br>独立核实后批准或拒绝；<br>先到的决定生效', 'Claude / Codex / Kimi…<br>verifies, then allows or denies;<br>first decision wins')}</p></div>
+  <div class="box" style="left:990px;top:574px;width:240px;height:52px;padding:10px 16px"><h4 style="margin:0;font-size:15px;white-space:nowrap">${L('🧑 你：面板里一键决定', '🧑 You decide in the panel')}</h4></div>
+  <div class="note" style="left:60px;top:440px;width:440px">${L('拒绝理由原样回给 agent，它会改用正确做法，而不是硬绕', 'the reason goes back to the agent so it adapts instead of working around')}</div>
+  `
+} else {
+  const dots = (n, x, y, c) => Array.from({ length: n }, (_, i) => `<circle cx="${x + (i % 6) * 22}" cy="${y + Math.floor(i / 6) * 22}" r="7" fill="${c}"/>`).join('')
+  root.innerHTML = `
+  <h2>${L('宝瓶口：会话不限，只限住打到每个 key 的请求', 'Bottle Neck: unlimited sessions, metered requests per key')}</h2>
+  <svg width="1280" height="640"><defs>${markers}</defs>
+   ${dots(30, 70, 150, '#2f6f8a')}
+   ${dots(8, 70, 150, '#5fe0c0')}
+   ${arrow('M200 220 C 250 220, 250 180, 300 180')}
+   ${arrow('M200 220 C 250 220, 250 330, 300 330')}
+   ${arrow('M200 220 C 250 220, 250 480, 300 480')}
+   <path d="M560 140 L640 165 L640 195 L560 220 Z" fill="none" stroke="#2f6f8a" stroke-width="1.5"/>
+   <path d="M560 290 L640 315 L640 345 L560 370 Z" fill="none" stroke="#2f6f8a" stroke-width="1.5"/>
+   <path d="M560 440 L640 465 L640 495 L560 520 Z" fill="none" stroke="#2f6f8a" stroke-width="1.5"/>
+   ${arrow('M640 180 H 760')}
+   ${arrow('M640 330 H 760')}
+   ${arrow('M640 480 H 760', '#ef5b5b', '5 5')}
+   ${arrow('M960 470 C 1000 470, 1000 190, 966 190', '#e3a33b', '6 6')}
+  </svg>
+  <div class="note" style="left:62px;top:290px;width:220px;font-size:13px;color:#b9d0db">${L('100 个会话<br>（只有在跑任务的才发请求）', '100 sessions<br>(only busy ones send requests)')}</div>
+  <div class="box" style="left:300px;top:140px;width:260px;height:80px"><h4>deepseek-official</h4><p class="mono">${L('上限 8 · 在途 8 · 排队 5', 'cap 8 · busy 8 · queued 5')}</p></div>
+  <div class="box" style="left:300px;top:290px;width:260px;height:80px"><h4>zhipu</h4><p class="mono">${L('上限 4 · 在途 2 · 排队 0', 'cap 4 · busy 2 · queued 0')}</p></div>
+  <div class="box" style="left:300px;top:440px;width:260px;height:80px;outline-color:#ef5b5b"><h4>my-relay</h4><p class="mono">${L('上限 4→2→1 · 熔断', 'cap 4→2→1 · breaker open')}</p></div>
+  <div class="box" style="left:760px;top:140px;width:200px;height:80px"><h4>API ✓</h4><p>${L('每次发出前错开<br>150 ms + 随机抖动', 'spaced 150 ms<br>+ random jitter')}</p></div>
+  <div class="box" style="left:760px;top:290px;width:200px;height:80px"><h4>API ✓</h4><p>${L('遵守 Retry-After', 'honours Retry-After')}</p></div>
+  <div class="box" style="left:760px;top:440px;width:200px;height:80px;outline-color:#ef5b5b"><h4 style="color:#ffadad">429 × 5</h4><p>${L('连续限流 → 熔断 2 分钟', '5 in a row → open 2 min')}</p></div>
+  <div class="box" style="left:1010px;top:140px;width:222px;height:380px">
+   <h4>${L('自动调节', 'Self-tuning')}</h4>
+   <p>${L('· 429 / 过载：上限减半<br>· 连续 20 次成功：上限 +1<br>· 熔断期间：请求沿模型链<br>&nbsp;&nbsp;切到备用模型<br>· 冷却结束：放 1 个请求试探<br>&nbsp;&nbsp;成功就切回首选<br>· 模型本身坏了（400/404…）：<br>&nbsp;&nbsp;这条路由停 30 分钟<br><br>会话数、任务数都不限；<br>闲着的会话不花一分钱。',
+     '· 429 / overload: halve the cap<br>· 20 successes: cap +1<br>· breaker open: requests move<br>&nbsp;&nbsp;down the model chain<br>· after cooldown: one probe,<br>&nbsp;&nbsp;then switch back<br>· broken model (400/404…):<br>&nbsp;&nbsp;bench that route 30 min<br><br>Sessions and tasks are unlimited;<br>idle sessions cost nothing.')}</p></div>
+  <div class="note" style="left:640px;top:545px;width:360px">${L('↑ 熔断期间，请求沿模型链切到备用模型（橙色虚线）', '↑ while the breaker is open, requests fail over down the model chain (orange)')}</div>
+  `
+}
+</script></body></html>

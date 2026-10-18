@@ -1,0 +1,15 @@
+# 都江堰 · DSH Agent Dispatch & Guard — profile patch row.
+# Override any field from your own profile patch (cordis.patch.yml under $DSH_HOME/profiles/<profile>/).
+- insert:
+    - id: dujiangyan-dispatch
+      name: 'dsh-dujiangyan-dispatch'
+      config:
+        host: 127.0.0.1
+        port: 8790
+        # Directories workers may write to. REQUIRED: sessions are refused until at least one is set.
+        workspaceRoots: []
+        permissionPreset: workspace-write
+        agentPreset: standard
+        approvalTimeoutMs: 900000
+        fallbackToHuman: true
+        maxSessions: 8

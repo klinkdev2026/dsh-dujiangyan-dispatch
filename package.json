@@ -1,0 +1,91 @@
+{
+  "name": "dsh-dujiangyan-dispatch",
+  "description": "Dujiangyan · DSH Agent Dispatch & Guard — let Claude Code, Codex, Kimi Code or any MCP client command any number of mixed-model DeepSeek Harness agents behind one permission gate, per-key admission control and resource leases.",
+  "version": "0.1.0-alpha.1",
+  "license": "MIT",
+  "author": "klinkdev2026",
+  "homepage": "https://github.com/klinkdev2026/dsh-dujiangyan-dispatch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klinkdev2026/dsh-dujiangyan-dispatch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/klinkdev2026/dsh-dujiangyan-dispatch/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "NOTICE.md",
+    "LESSONS.md",
+    "CHANGELOG.md",
+    "docs",
+    "icon.svg",
+    "locale/*.json"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "mcp",
+    "agent-orchestration",
+    "permission-gate",
+    "rate-limit",
+    "dujiangyan"
+  ],
+  "engines": {
+    "node": ">=22.19.0",
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
+    "test": "node --test --experimental-strip-types \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.12",
+    "typescript": "^5.9.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "icon": "./icon.svg"
+}

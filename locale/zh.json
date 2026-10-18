@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "都江堰 · Agent 调度与守门",
+    "description": "让 Claude Code、Codex、Kimi Code 等 AI 客户端通过 MCP 调度桌面版里的多模型 agent：工具调用三档闸门与审批、按 key 限流与熔断、备用模型自动切换、独占资源锁，并提供审查面板。"
+  }
+}

@@ -1,0 +1,3 @@
+node_modules/
+*.tgz
+assets/src/panel-demo.js

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Dujiangyan · Agent Dispatch & Guard",
+    "description": "Let Claude Code, Codex, Kimi Code and other MCP clients dispatch mixed-model agents in the desktop app, with a three-tier tool gate and approvals, per-key admission control and circuit breaking, automatic model failover, exclusive resource leases and a review panel."
+  }
+}

@@ -1,0 +1,112 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}
+html{background:radial-gradient(1200px 600px at 50% 120%,#0d3b4a 0%,#081a24 55%,#050d13 100%) #050d13}
+html,body{margin:0;width:1280px;height:800px;overflow:hidden;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#e8f1f6}
+body{background:transparent}
+.mono{font-family:"Cascadia Mono",Consolas,"Microsoft YaHei",monospace}
+.top{position:absolute;left:48px;top:34px;right:48px;display:flex;justify-content:space-between;align-items:flex-end}
+h1{margin:0;font-size:40px;font-weight:750;letter-spacing:.5px}
+h1 small{font-size:20px;font-weight:500;color:#7fc8d8;margin-left:14px;letter-spacing:1px}
+.tag{margin-top:8px;font-size:18px;color:#a9c4d1}
+.tag b{color:#5fe0c0;font-weight:600}
+.colh{position:absolute;top:150px;font-size:13px;letter-spacing:2.5px;color:#6f93a6;font-weight:600}
+/* clients */
+.cl{position:absolute;left:48px;width:318px;height:100px;border-radius:12px;background:#0d1d27;border:1px solid #1f3a4a;box-shadow:0 8px 24px #0006;overflow:hidden}
+.cl .bar{height:26px;display:flex;align-items:center;gap:6px;padding:0 10px;background:#0a161e;border-bottom:1px solid #1a3040;font-size:12px;color:#9cb6c4}
+.cl .bar i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.cl .bar b{margin-left:6px;color:#e8f1f6;font-weight:600}
+.cl .bar span{margin-left:auto;font-size:11px;color:#5d7f90}
+.cl .body{padding:9px 12px;font-size:13px;line-height:1.55}
+.p{color:#e8f1f6}.p:before{content:"› ";color:#5fe0c0}
+.r{color:#7aa3b6}
+/* weir */
+.weir{position:absolute;left:430px;top:178px;width:420px;height:470px}
+.st{position:absolute;left:46px;width:360px;height:132px;border-radius:14px;background:linear-gradient(180deg,#0f2b37,#0b202a);border:1px solid #23506200;outline:1px solid #22495a;padding:14px 16px 0 70px}
+.st .n{position:absolute;left:16px;top:16px;width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px}
+.st h3{white-space:nowrap;margin:0;font-size:20px;font-weight:700}
+.st h3 em{font-style:normal;font-size:14px;font-weight:500;color:#8fb3c4;margin-left:8px}
+.st p{margin:6px 0 0;font-size:13.5px;color:#b9d0db;line-height:1.55}
+/* legion */
+.dsh{position:absolute;left:890px;top:178px;width:342px;height:470px;border-radius:14px;background:#0b161d;border:1px solid #22414f;box-shadow:0 10px 30px #0007;overflow:hidden}
+.dsh .bar{height:30px;display:flex;align-items:center;gap:6px;padding:0 12px;background:#09131a;border-bottom:1px solid #1b313d;font-size:12px;color:#9cb6c4}
+.dsh .bar i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:12px}
+.ag{height:66px;border-radius:9px;background:#10222c;border:1px solid #1d3946;padding:7px 8px;position:relative;font-size:11.5px}
+.ag .role{color:#d5e6ee;font-weight:600}
+.ag .m{margin-top:6px;font-size:10px;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;display:inline-block;padding:1px 6px;border-radius:6px}
+.ag:after{content:"";position:absolute;right:8px;top:9px;width:7px;height:7px;border-radius:50%;background:var(--s)}
+.more{display:flex;align-items:center;justify-content:center;color:#7fc8d8;font-size:18px;font-weight:700;border-style:dashed}
+.more:after{display:none}
+.foot{position:absolute;left:0;right:0;bottom:12px;text-align:center;font-size:12.5px;color:#8fb3c4}
+.legend{position:absolute;left:48px;right:48px;top:676px;display:flex;gap:22px;font-size:12.5px;color:#8fb3c4;justify-content:center}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+svg.flow{position:absolute;left:0;top:0;pointer-events:none}
+</style></head><body>
+<div class="top"><div>
+<h1 id="t1"></h1>
+<div class="tag" id="t2"></div></div></div>
+<div class="colh" style="left:48px" id="h1"></div>
+<div class="colh" style="left:476px" id="h2"></div>
+<div class="colh" style="left:890px" id="h3"></div>
+
+<svg class="flow" width="1280" height="720">
+ <defs>
+  <linearGradient id="w" x1="0" x2="1"><stop offset="0" stop-color="#2bb6c9" stop-opacity=".15"/><stop offset="1" stop-color="#5fe0c0" stop-opacity=".9"/></linearGradient>
+  <linearGradient id="w2" x1="0" x2="1"><stop offset="0" stop-color="#5fe0c0" stop-opacity=".9"/><stop offset="1" stop-color="#4d8dff" stop-opacity=".5"/></linearGradient>
+  <marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#5fe0c0"/></marker>
+ </defs>
+ <g fill="none" stroke="url(#w)" stroke-width="2.4">
+  <path d="M366 228 C 420 228, 420 300, 476 300"/>
+  <path d="M366 338 C 420 338, 430 330, 476 320"/>
+  <path d="M366 448 C 420 448, 430 350, 476 340"/>
+  <path d="M366 558 C 420 558, 440 360, 476 360"/>
+ </g>
+ <!-- the channel down through the three stages -->
+ <path d="M496 252 V 610" stroke="#5fe0c0" stroke-opacity=".35" stroke-width="10" stroke-linecap="round"/>
+ <path d="M496 252 V 610" stroke="#5fe0c0" stroke-width="2" stroke-dasharray="2 9" stroke-linecap="round"/>
+ <!-- spillway out of 飞沙堰 -->
+ <g fill="none" stroke="url(#w2)" stroke-width="2.4" marker-end="url(#a)">
+  <path d="M836 580 C 864 580, 860 420, 884 420"/>
+ </g>
+</svg>
+
+<div id="clients"></div>
+<div class="weir" id="weir"></div>
+<div class="dsh"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span style="margin-left:8px">DeepSeek Harness</span></div>
+<div class="grid" id="grid"></div><div class="foot" id="foot"></div></div>
+<div class="legend" id="legend"></div>
+<script>
+const en = new URLSearchParams(location.search).get('lang') === 'en'
+const L = (a, b) => en ? b : a
+document.getElementById('t1').innerHTML = L('都江堰<small>DSH Agent 调度与守门</small>', 'Dujiangyan<small>DSH Agent Dispatch &amp; Guard</small>')
+document.getElementById('t2').innerHTML = L('用你喜欢的 AI 客户端，指挥<b>任意数量、任意模型</b>的 DeepSeek Harness agent——每一次工具调用都过闸门，每一个 key 都不被冲垮。',
+  'Command <b>any number of mixed-model</b> DeepSeek Harness agents from the AI client you already use — every tool call gated, every key protected.')
+document.getElementById('h1').textContent = L('你的 AI 客户端 · 任选', 'YOUR AI CLIENT · ANY')
+document.getElementById('h2').textContent = L('都江堰（本插件）', 'DUJIANGYAN (THIS PLUGIN)')
+document.getElementById('h3').textContent = L('DEEPSEEK HARNESS 军团', 'DEEPSEEK HARNESS LEGION')
+const clients = [
+  ['Claude Code', 'CLI', L('开 3 个 flash 写代码，1 个 kimi 审核', 'open 3 flash coders and 1 kimi reviewer'), 'djy_session_create × 4'],
+  ['Codex', 'CLI · App', L('把这 20 个失败用例分给 flash 并行修', 'split these 20 failing tests across flash'), 'djy_task_submit × 20'],
+  ['Kimi Code', 'CLI', L('审核 codex 刚才那批改动', 'review the batch codex just finished'), 'djy_events_watch · djy_approval_decide'],
+  [L('pi · 智谱 · Cursor …', 'pi · Zhipu · Cursor …'), L('任意 MCP 客户端', 'any MCP client'), L('跑一次基准测试，独占机器', 'run the benchmark with the machine to itself'), 'resources: ["bench"]'],
+]
+document.getElementById('clients').innerHTML = clients.map(([n, k, p, r], i) => `<div class="cl" style="top:${178 + i * 110}px"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><b>${n}</b><span>${k}</span></div><div class="body"><div class="p">${p}</div><div class="r mono">${r}</div></div></div>`).join('')
+const stages = [
+  ['1', '#1d4f7a', '#8cc4ff', L('鱼嘴 · 分流', 'Fish Mouth'), L('多模型路由', 'routing'), L('每个角色一条模型链：flash 写代码、kimi 做审核<br>坏路由自动跳过，出故障切到备用模型', 'one model chain per role. Broken routes are skipped; outages fail over.')],
+  ['2', '#5a2a2a', '#ff9b9b', L('飞沙堰 · 排沙', 'Flying Sand'), L('权限闸门', 'permission gate'), L('安全的放行，危险的拒绝并说明原因，<br>拿不准的交给 AI 审批人，再拿不准交给你', 'Safe calls pass, dangerous ones are denied with a reason, grey ones go to an AI approver, then to you.')],
+  ['3', '#1d5a4a', '#7ff0cf', L('宝瓶口 · 限流', 'Bottle Neck'), L('按 key 准入', 'per-key admission'), L('并发上限 · 错峰发送 · 429 自动收窄<br>熔断 → 切备用 → 半开试探 → 切回', 'cap · spacing · halve on 429<br>breaker → failover → probe → back')],
+]
+document.getElementById('weir').innerHTML = stages.map(([n, bg, fg, h, em, p], i) => `<div class="st" style="top:${i * 156}px"><div class="n" style="background:${bg};color:${fg}">${n}</div><h3>${h}<em>${em}</em></h3><p>${p}</p></div>`).join('')
+const M = { ds: ['#13314f', '#8cc4ff'], pro: ['#26244f', '#b3a8ff'], kimi: ['#3a2350', '#e0a8ff'], glm: ['#163f33', '#7ff0cf'], qwen: ['#4a3216', '#ffc27a'] }
+const ag = [
+  ['implementer', 'flash', 'ds', '#3fb97a'], ['implementer', 'flash', 'ds', '#3fb97a'], ['implementer', 'glm', 'glm', '#3fb97a'],
+  ['implementer', 'qwen', 'qwen', '#e3a33b'], ['implementer', 'flash', 'ds', '#3fb97a'], ['implementer', 'flash', 'ds', '#5b6b75'],
+  ['reviewer', 'kimi', 'kimi', '#3fb97a'], ['reviewer', 'v4-pro', 'pro', '#5b6b75'], ['planner', 'v4-pro', 'pro', '#3fb97a'],
+  ['bench', 'flash', 'ds', '#e3a33b'], ['implementer', 'glm', 'glm', '#3fb97a'], ['implementer', 'flash', 'ds', '#3fb97a'],
+  ['reviewer', 'kimi', 'kimi', '#3fb97a'], ['implementer', L('任意模型', 'any'), 'qwen', '#5b6b75'],
+]
+document.getElementById('grid').innerHTML = ag.map(([r, m, k, s]) => `<div class="ag" style="--s:${s}"><div class="role">${r}</div><span class="m mono" style="background:${M[k][0]};color:${M[k][1]}">${m}</span></div>`).join('') + `<div class="ag more">+ N</div>`
+document.getElementById('foot').textContent = L('会话数不限 · 每家 key 独立限流 · 桌面版里随时点开看', 'unlimited sessions · every key metered separately')
+document.getElementById('legend').innerHTML = [['#3fb97a', L('运行中', 'running')], ['#e3a33b', L('等审批 / 等独占锁', 'waiting for approval / lease')], ['#5b6b75', L('空闲（不花钱）', 'idle (costs nothing)')]].map(([c, t]) => `<span><i style="background:${c}"></i>${t}</span>`).join('') + `<span>· ${L('本机运行，令牌鉴权，不上传数据', 'runs locally, token-authenticated, nothing uploaded')}</span>`
+</script></body></html>
