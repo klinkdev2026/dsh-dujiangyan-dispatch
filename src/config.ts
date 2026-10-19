@@ -3,6 +3,7 @@
  * its defaults. Every field is optional in the patch.
  */
 import path from 'node:path'
+import { DEFAULT_AI_APPROVAL, judgesFromRoster, type AiApprovalConfig, type Judge } from './ai-approval.ts'
 import { DEFAULT_LIMIT, type ProviderLimit } from './limiter.ts'
 import { canonicalPath, dshHome } from './paths.ts'
 import type { RuleConfig } from './rules.ts'
@@ -22,7 +23,11 @@ export interface Config {
   permissionPreset?: string
   agentPreset?: string
   approvalTimeoutMs?: number
-  /** When an approval times out, hand root sessions to the desktop's own approval prompt. */
+  /**
+   * When an approval times out, hand root sessions to the desktop's own approval prompt instead of
+   * denying. Off by default: a timed-out call is denied with "resubmit unchanged", because the
+   * desktop prompt that followed looked like (and was approved as) a sandbox escalation.
+   */
   fallbackToHuman?: boolean
   roster?: Record<string, RouteEntry[]>
   limits?: { defaults?: Partial<ProviderLimit>; providers?: Record<string, Partial<ProviderLimit>> }
@@ -40,6 +45,21 @@ export interface Config {
   rules?: RuleConfig
   /** Run the workspace preflight before creating a session (Windows integrity labels). */
   preflight?: boolean
+  /** Waits before retrying a task whose first turn failed in host startup (prompt assembly not ready); default [1000, 3000]. */
+  startupRetryDelaysMs?: number[]
+  /** Model judges that decide workspace-confined escalations; all must agree. Off by default. */
+  aiApproval?: { enabled?: boolean; judges?: Judge[]; timeoutMs?: number; maxPerSessionPer10Min?: number }
+  /** While a task holds the `bench` lease, heavy commands (builds, tests) from other sessions wait. On by default. */
+  quietMode?: { enabled?: boolean; patterns?: string[]; maxWaitMs?: number }
+  /** Pause a task after repeated gate/AI denials (N in a row, or M of the last W verdicts). On by default. */
+  denyBreaker?: { enabled?: boolean; consecutiveDenies?: number; windowDenies?: number; windowSize?: number }
+  /**
+   * Watchdog: nothing may wait silently. A pending approval steers its worker after `steerAfterMs`
+   * and raises alerts at each of `warnAfterMs`; a running task with no activity for `stallAfterMs`
+   * is reported stalled; pending approvals with no MCP client call for `orchestratorAbsentMs` raise
+   * an "orchestrator absent" alert for the human.
+   */
+  watchdog?: { intervalMs?: number; steerAfterMs?: number; warnAfterMs?: number[]; stallAfterMs?: number; orchestratorAbsentMs?: number }
 }
 
 export interface ResolvedConfig {
@@ -58,6 +78,11 @@ export interface ResolvedConfig {
   readonly maxActiveSessions: number
   readonly rules: RuleConfig
   readonly preflight: boolean
+  readonly startupRetryDelaysMs: readonly number[]
+  readonly aiApproval: AiApprovalConfig
+  readonly quietMode: { readonly enabled: boolean; readonly patterns: readonly string[]; readonly maxWaitMs: number }
+  readonly denyBreaker: { readonly enabled: boolean; readonly consecutiveDenies: number; readonly windowDenies: number; readonly windowSize: number }
+  readonly watchdog: { readonly intervalMs: number; readonly steerAfterMs: number; readonly warnAfterMs: readonly number[]; readonly stallAfterMs: number; readonly orchestratorAbsentMs: number }
 }
 
 /**
@@ -80,6 +105,7 @@ export const DEFAULT_ROSTER: Readonly<Record<string, readonly RouteEntry[]>> = {
 }
 
 export function resolveConfig(config: Config = {}): ResolvedConfig {
+  const roster = { ...DEFAULT_ROSTER, ...config.roster }
   const limits = config.limits ?? {}
   const defaults = { ...DEFAULT_LIMIT, ...PERSONAL_SCALE_LIMIT, ...limits.defaults }
   const providers = { ...DEFAULT_PROVIDER_LIMITS, ...limits.providers }
@@ -91,8 +117,8 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     permissionPreset: config.permissionPreset ?? 'workspace-write',
     agentPreset: config.agentPreset ?? 'standard',
     approvalTimeoutMs: config.approvalTimeoutMs ?? 15 * 60_000,
-    fallbackToHuman: config.fallbackToHuman ?? true,
-    roster: { ...DEFAULT_ROSTER, ...config.roster },
+    fallbackToHuman: config.fallbackToHuman ?? false,
+    roster,
     limitFor: provider => ({ ...defaults, ...providers[provider] }),
     stagger: {
       enabled: config.stagger?.enabled ?? false,
@@ -104,5 +130,31 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     maxActiveSessions: config.maxActiveSessions ?? 0,
     rules: config.rules ?? {},
     preflight: config.preflight ?? true,
+    startupRetryDelaysMs: config.startupRetryDelaysMs ?? [1000, 3000],
+    aiApproval: {
+      enabled: config.aiApproval?.enabled ?? DEFAULT_AI_APPROVAL.enabled,
+      judges: config.aiApproval?.judges ?? judgesFromRoster(roster),
+      scope: 'wide',
+      timeoutMs: config.aiApproval?.timeoutMs ?? DEFAULT_AI_APPROVAL.timeoutMs,
+      maxPerSessionPer10Min: config.aiApproval?.maxPerSessionPer10Min ?? DEFAULT_AI_APPROVAL.maxPerSessionPer10Min,
+    },
+    quietMode: {
+      enabled: config.quietMode?.enabled ?? true,
+      patterns: config.quietMode?.patterns ?? [],
+      maxWaitMs: config.quietMode?.maxWaitMs ?? 30 * 60_000,
+    },
+    denyBreaker: {
+      enabled: config.denyBreaker?.enabled ?? true,
+      consecutiveDenies: config.denyBreaker?.consecutiveDenies ?? 3,
+      windowDenies: config.denyBreaker?.windowDenies ?? 6,
+      windowSize: config.denyBreaker?.windowSize ?? 10,
+    },
+    watchdog: {
+      intervalMs: config.watchdog?.intervalMs ?? 15_000,
+      steerAfterMs: config.watchdog?.steerAfterMs ?? 60_000,
+      warnAfterMs: config.watchdog?.warnAfterMs ?? [3 * 60_000, 8 * 60_000],
+      stallAfterMs: config.watchdog?.stallAfterMs ?? 10 * 60_000,
+      orchestratorAbsentMs: config.watchdog?.orchestratorAbsentMs ?? 3 * 60_000,
+    },
   }
 }

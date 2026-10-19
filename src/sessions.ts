@@ -9,7 +9,7 @@ import type { EventLog } from './events.ts'
 import type {
   AgentHandle, AgentPresetRegistry, HostAgent, HostContext, PermissionPresets, WorkspaceRegistry,
 } from './host.ts'
-import { optional } from './host.ts'
+import { DISPATCH_CANCEL, optional } from './host.ts'
 import { canonicalPath, isWithinAny } from './paths.ts'
 import { preflightWorkspace, type PreflightIssue } from './preflight.ts'
 import type { RouteHealth } from './llm-hooks.ts'
@@ -28,10 +28,26 @@ export interface CreateSessionInput {
   readonly createdBy?: string
   /** Batch label grouping sessions of one dispatch run. */
   readonly batch?: string
+  /**
+   * Paths the session may write (inside the roots). Default: the cwd when it is a strict
+   * subdirectory of a root (one spike folder), else the whole roots (unchanged behaviour).
+   */
+  readonly writeScope?: readonly string[]
 }
 
+/** A question a worker put to the user (`user-questions/request`), handed to the orchestrator instead. */
+export interface WorkerQuestion {
+  readonly id: string
+  readonly question: string
+  readonly detail?: string
+  readonly options?: ReadonlyArray<{ label: string }>
+}
+
+/** What a session does with a question nobody is there to answer. */
+export type QuestionHandler = (sessionId: string, questions: readonly WorkerQuestion[]) => void
+
 export type CreateSessionResult =
-  | { readonly ok: true; readonly sessionId: string; readonly route: RouteEntry; readonly chain: readonly RouteEntry[]; readonly skippedRoutes: ReadonlyArray<{ route: RouteEntry; error: string }>; readonly warnings: readonly string[] }
+  | { readonly ok: true; readonly sessionId: string; readonly route: RouteEntry; readonly chain: readonly RouteEntry[]; readonly skippedRoutes: ReadonlyArray<{ route: RouteEntry; error: string }>; readonly warnings: readonly string[]; readonly writeScope?: readonly string[] }
   | { readonly ok: false; readonly error: string; readonly preflight?: readonly PreflightIssue[] }
 
 export class SessionManager {
@@ -41,6 +57,8 @@ export class SessionManager {
   private readonly registry: DispatchRegistry
   private readonly events: EventLog
   private readonly health: RouteHealth | undefined
+  /** Set by the task manager: records the question on the running task and ends its turn. */
+  onQuestion: QuestionHandler | undefined
 
   constructor(ctx: HostContext, config: ResolvedConfig, registry: DispatchRegistry, events: EventLog, health?: RouteHealth) {
     this.health = health
@@ -83,6 +101,8 @@ export class SessionManager {
     }
     const chain = input.route !== undefined ? [input.route, ...(input.fallbacks ?? [])] : this.config.roster[input.role ?? 'implementer']
     if (chain === undefined || chain.length === 0) return { ok: false, error: `unknown role "${input.role}" and no explicit route` }
+    const scope = this.resolveWriteScope(cwd, input.writeScope)
+    if ('error' in scope) return { ok: false, error: scope.error }
     const { valid, skipped } = await this.validateChain(chain)
     const primary = valid[0]
     if (primary === undefined) {
@@ -113,6 +133,7 @@ export class SessionManager {
         } catch (err) {
           warnings.push(`agent preset "${this.config.agentPreset}" not mounted: ${err instanceof Error ? err.message : String(err)}`)
         }
+        this.installQuestionHandoff(agentCtx, sessionId)
       },
     })
     const session = handle.agent.session
@@ -134,27 +155,83 @@ export class SessionManager {
       createdBy: who,
       ...input.batch !== undefined ? { batch: input.batch } : {},
       cwd,
+      ...scope.scope !== undefined ? { writeScope: scope.scope } : {},
       chain: valid,
       createdAt: new Date().toISOString(),
     })
     this.events.append('session/created', { sessionId, title, createdBy: who, batch: input.batch, role: input.role, route: `${primary.provider}/${primary.model}`, cwd, warnings })
-    return { ok: true, sessionId, route: primary, chain: valid, skippedRoutes: skipped, warnings }
+    return { ok: true, sessionId, route: primary, chain: valid, skippedRoutes: skipped, warnings, ...scope.scope !== undefined ? { writeScope: scope.scope } : {} }
+  }
+
+  /** The canonical write scope for a new session, or an error when a path is outside the roots. */
+  private resolveWriteScope(cwd: string, requested: readonly string[] | undefined): { scope?: string[] } | { error: string } {
+    const roots = this.config.workspaceRoots
+    if (requested !== undefined && requested.length > 0) {
+      const scope = requested.map(p => canonicalPath(p))
+      const outside = scope.filter(p => !isWithinAny(roots, p))
+      if (outside.length > 0) return { error: `writeScope must stay inside the workspace roots (${roots.join(', ')}): ${outside.join(', ')}` }
+      return { scope }
+    }
+    // A cwd that IS a root keeps the old behaviour (whole roots); a spike folder below a root is its own scope.
+    const isRoot = roots.some(r => isWithinAny([cwd], r) && isWithinAny([r], cwd))
+    return isRoot ? {} : { scope: [cwd] }
+  }
+
+  /**
+   * Prior art: dsh-crew worker-question.mjs. No one answers a dispatched worker's question, so the
+   * request must not hang: hand it to the orchestrator (the task ends as needs_input) and refuse it.
+   */
+  private installQuestionHandoff(agentCtx: unknown, sessionId: string): void {
+    const on = (agentCtx as { on?: HostContext['on'] } | undefined)?.on
+    if (typeof on !== 'function') return
+    on.call(agentCtx, 'user-questions/request', (request: { questions?: unknown }) => {
+      const questions: WorkerQuestion[] = Array.isArray(request?.questions)
+        ? (request.questions as Array<Record<string, unknown>>).slice(0, 16).map(q => ({
+            id: String(q['id'] ?? '').slice(0, 200),
+            question: String(q['question'] ?? '').slice(0, 4000),
+            ...typeof q['detail'] === 'string' ? { detail: (q['detail'] as string).slice(0, 12_000) } : {},
+            ...Array.isArray(q['options']) ? { options: (q['options'] as Array<Record<string, unknown>>).slice(0, 32).map(o => ({ label: String(o['label'] ?? '').slice(0, 500) })) } : {},
+          }))
+        : []
+      this.onQuestion?.(sessionId, questions)
+      const error = new Error('No one is watching this session: the question was handed to the orchestrator and this turn stops. An unanswered question grants no permission.')
+      error.name = 'UserQuestionError'
+      ;(error as Error & { code?: string }).code = 'UNATTENDED_WORKER'
+      return Promise.reject(error)
+    }, { prepend: true })
   }
 
   /** The live agent for a dispatched session, resuming it after a host restart. */
   async agent(sessionId: string): Promise<HostAgent> {
     const handle = this.handles.get(sessionId)
     if (handle !== undefined) return handle.agent
-    const live = this.ctx.agents.get(sessionId)
-    if (live !== undefined) return live
     const rec = this.registry.get(sessionId)
+    const live = this.ctx.agents.get(sessionId)
+    if (live !== undefined) {
+      if (rec !== undefined) this.applyPermissionPreset(live.session, sessionId)
+      return live
+    }
     if (rec === undefined) throw new Error(`session ${sessionId} is not a dispatched session`)
+    // A cold resume does not restore the creation-time agent options: without them the
+    // persona section's {{model}} has no value and every turn fails. Re-send the route
+    // (first healthy one in the saved chain) and re-apply the permission preset.
+    const route = rec.chain.find(r => this.health?.isBroken(r) !== true) ?? rec.chain[0]
     const resumed = await this.ctx.agents.resume({
       resumeSessionId: sessionId,
+      ...route !== undefined
+        ? { agentOptions: { provider: route.provider, model: route.model, ...route.effort !== undefined ? { reasoningEffort: route.effort } : {} } }
+        : {},
       setup: async agentCtx => {
         await optional<AgentPresetRegistry>(this.ctx, 'agentPresets')?.mount(agentCtx, this.config.agentPreset)
+        this.installQuestionHandoff(agentCtx, sessionId)
       },
     })
+    try {
+      this.applyPermissionPreset(resumed.agent.session, sessionId)
+    } catch (err) {
+      await resumed.dispose()
+      throw err
+    }
     this.handles.set(sessionId, resumed)
     return resumed.agent
   }
@@ -164,7 +241,7 @@ export class SessionManager {
     const handle = this.handles.get(sessionId)
     this.handles.delete(sessionId)
     try {
-      handle?.agent.cancel()
+      handle?.agent.cancel(DISPATCH_CANCEL)
       await handle?.dispose()
     } finally {
       this.registry.close(sessionId)
@@ -182,6 +259,17 @@ export class SessionManager {
       }
     }
     this.handles.clear()
+  }
+
+  /** Re-apply the sandbox preset on a resumed session; refuse to hand out the session if that fails. */
+  private applyPermissionPreset(session: HostAgent["session"], sessionId: string): void {
+    const presets = optional<PermissionPresets>(this.ctx, 'permissionPresets')
+    if (presets === undefined) return
+    try {
+      presets.set(session, this.config.permissionPreset)
+    } catch (err) {
+      throw new Error(`refusing to resume ${sessionId}: permission preset "${this.config.permissionPreset}" could not be re-applied (${err instanceof Error ? err.message : String(err)})`)
+    }
   }
 
   private async attachWorkspace(cwd: string, sessionId: string, warnings: string[]): Promise<void> {

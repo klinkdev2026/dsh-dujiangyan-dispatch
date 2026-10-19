@@ -43,7 +43,7 @@ const C = {
   mute: 'var(--dsw-alias-label-secondary, #888)',
 }
 
-const statusColor = (s: string) => s === 'done' ? C.ok : s === 'error' ? C.err : s === 'cancelled' ? C.mute : s === 'running' ? C.info : C.warn
+const statusColor = (s: string) => s === 'done' ? C.ok : s === 'error' || s === 'interrupted' || s === 'needs_attention' ? C.err : s === 'cancelled' ? C.mute : s === 'running' ? C.info : C.warn
 const kindColor = (k: string) => k === 'deny' ? C.err : k === 'escalate' ? C.warn : C.ok
 const time = (iso?: string) => iso === undefined ? '' : new Date(iso).toLocaleTimeString()
 const short = (id?: string) => (id ?? '').replace(/^session-/, '').slice(0, 8)
@@ -119,10 +119,11 @@ export function ReviewPage({ t, openSession, archiveSession, unarchiveSession }:
           <button key={id} type="button" role="tab" aria-selected={tab === id} style={css.tab(tab === id)} onClick={() => setTab(id)}>{label}</button>
         ))}
       </div>
+      <HealthBanner t={t} health={state.health} onOpen={() => setTab('approvals')} />
       {tab === 'overview' && <Overview t={t} state={state} events={events} />}
       {tab === 'sessions' && <Sessions t={t} state={state} openSession={openSession} archiveSession={archiveSession} unarchiveSession={unarchiveSession} post={post} />}
       {tab === 'gate' && <Gate t={t} state={state} events={events} />}
-      {tab === 'approvals' && <Approvals t={t} state={state} post={post} />}
+      {tab === 'approvals' && <Approvals t={t} state={state} post={post} openSession={openSession} />}
       {tab === 'routes' && <Routes t={t} state={state} events={events} />}
     </div>
   )
@@ -337,11 +338,15 @@ function Sessions({ t, state, openSession, archiveSession, unarchiveSession, pos
                       {s.title ?? short(s.sessionId)}
                     </div>
                     <div style={css.muted}>{t('workspace')}: {s.cwd} · {t('route')}: {s.chain.map((r: any) => `${r.provider}/${r.model}`).join(' → ')} · {short(s.sessionId)} · {time(s.createdAt)}</div>
+                    {(() => {
+                      const live = (bySession.get(s.sessionId) ?? []).find((x: any) => x.status === 'running' && typeof x.latest === 'string' && x.latest !== '')
+                      return live === undefined ? null : <div style={{ marginTop: 4 }}><span style={css.pill(C.info)}>{t('narration')}</span> {live.latest}</div>
+                    })()}
                   </div>
                   <div style={css.row}>
                     {/* Opening an archived or vanished session would start an unrelated empty conversation. */}
                     {s.desktop === 'archived' && <button type="button" style={css.btn} onClick={() => void unarchiveSession(s.sessionId)}>{t('restore')}</button>}
-                    {s.desktop !== 'archived' && s.desktop !== 'missing' && <button type="button" style={css.btn} onClick={() => openSession(s.sessionId)}>{t('open')}</button>}
+                    {s.desktop !== 'archived' && s.desktop !== 'missing' && <button type="button" style={css.btn} onClick={() => openOrCopy(openSession, s.sessionId, () => setNotice(t('ctxOpenFailed')))}>{t('open')}</button>}
                   </div>
                 </div>
                 {(bySession.get(s.sessionId) ?? []).slice(0, 8).map((task: any) => (
@@ -407,11 +412,72 @@ function Gate({ t, state, events }: { t: T; state: any; events: any[] }) {
   )
 }
 
-function Approvals({ t, state, post }: { t: T; state: any; post: (p: string, b: unknown) => Promise<{ ok: boolean; json: any }> }) {
+/** Open a worker session's transcript; when this desktop cannot navigate, copy the id instead. */
+function openOrCopy(openSession: (id: string) => boolean, id: string, onFallback: () => void): void {
+  if (openSession(id)) return
+  void navigator.clipboard?.writeText(id).catch(() => undefined)
+  onFallback()
+}
+
+/** Everything the gate attached about the call's task and the worker's own explanation. */
+function ApprovalContextView({ t, ctx }: { t: T; ctx: any }) {
+  if (ctx === undefined) return null
+  const calls: any[] = ctx.recentCalls ?? []
+  return (
+    <details open style={{ ...css.card, marginBottom: 6 }}>
+      <summary style={{ cursor: 'pointer', fontWeight: 600 }}>{t('ctxTitle')}</summary>
+      {ctx.taskTitle !== undefined && <div style={css.muted}>{t('ctxTask')}: {ctx.taskTitle}{ctx.route !== undefined ? ` · ${ctx.route}` : ''}</div>}
+      <div style={{ margin: '6px 0' }}><b>{t('ctxWhy')}:</b> {ctx.lastAssistant ?? <span style={css.muted}>{t('ctxNone')}</span>}</div>
+      {ctx.description !== undefined && <div style={{ marginBottom: 6 }}><b>{t('ctxDesc')}:</b> {ctx.description}</div>}
+      {calls.length > 0 && (
+        <div style={{ marginBottom: 6 }}>
+          <b>{t('ctxRecent')}:</b>
+          {calls.map((c, i) => (
+            <div key={i} style={{ ...css.code, fontSize: 12 }}>
+              <span style={css.pill(c.verdict.startsWith('deny') || c.verdict.endsWith('deny') ? C.err : c.verdict === 'allow' || c.verdict.endsWith('allow') ? C.ok : C.warn)}>{c.verdict}</span> {c.tool} {c.args}{c.decider !== undefined ? ` (${c.decider})` : ''}
+            </div>
+          ))}
+        </div>
+      )}
+      {ctx.taskPrompt !== undefined && (
+        <details><summary style={{ cursor: 'pointer' }}>{t('ctxPrompt')}</summary><div style={{ ...css.code, whiteSpace: 'pre-wrap' }}>{ctx.taskPrompt}</div></details>
+      )}
+    </details>
+  )
+}
+
+/** Alerts from the watchdog (approval aging, AI judge failures, stalled tasks, absent orchestrator). */
+function HealthBanner({ t, health, onOpen }: { t: T; health: any; onOpen: () => void }) {
+  const alerts: any[] = health?.alerts ?? []
+  if (alerts.length === 0) return null
+  const critical = alerts.some(a => a.level === 'critical')
+  return (
+    <div role="alert" style={{ ...css.card, borderColor: critical ? C.err : C.warn, borderWidth: 2, borderStyle: 'solid' }}>
+      <b style={{ color: critical ? C.err : C.warn }}>{t('healthTitle')} ({alerts.length})</b>
+      {alerts.map(a => (
+        <div key={a.id} style={css.muted}>
+          <span style={css.pill(a.level === 'critical' ? C.err : C.warn)}>{a.kind}</span> {a.message}
+          {a.kind === 'approval-aging' && <> <button type="button" style={css.btn} onClick={onOpen}>{t('tabApprovals')}</button></>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const ageMinutes = (iso: string) => Math.floor((Date.now() - Date.parse(iso)) / 60_000)
+
+function Approvals({ t, state, post, openSession }: { t: T; state: any; post: (p: string, b: unknown) => Promise<{ ok: boolean; json: any }>; openSession: (id: string) => boolean }) {
   const [reasons, setReasons] = useState<Record<string, string>>({})
+  const [notice, setNotice] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState<string | undefined>(undefined)
   const titles = useMemo(() => new Map(state.sessions.map((s: any) => [s.sessionId, s.title])), [state.sessions])
-  if (state.approvals.length === 0) return <div style={css.card}>{t('noPending')}</div>
+  const aiBadge = state.aiApproval !== undefined && (
+    <div style={{ ...css.card, ...css.muted }}>
+      <span style={css.pill(state.aiApproval.enabled ? C.ok : C.warn)}>{t(state.aiApproval.enabled ? 'aiOn' : 'aiOff')}</span>{' '}
+      {state.aiApproval.enabled ? (state.aiApproval.judges ?? []).map((j: any) => j.model).join(' + ') : ''}
+    </div>
+  )
+  if (state.approvals.length === 0) return <>{aiBadge}<div style={css.card}>{t('noPending')}</div></>
   const decide = async (id: string, decision: 'allow' | 'deny') => {
     setBusy(id)
     try {
@@ -422,16 +488,31 @@ function Approvals({ t, state, post }: { t: T; state: any; post: (p: string, b: 
   }
   return (
     <>
+      {aiBadge}
       {state.approvals.map((a: any) => (
         <div key={a.id} style={css.card}>
           <div style={{ ...css.row, justifyContent: 'space-between' }}>
             <div>
               <span style={css.pill(C.warn)}>{a.rule}</span> <b>{a.tool}</b>
               <span style={css.muted}> · {String(titles.get(a.sessionId) ?? short(a.sessionId))} · {t('expiresAt')} {time(a.expiresAt)}</span>
+              {' '}<span style={css.pill(ageMinutes(a.createdAt) >= 3 ? C.err : C.mute)}>{t('waited')} {ageMinutes(a.createdAt)} {t('minutes')}</span>
             </div>
+            <button type="button" style={css.btn} onClick={() => openOrCopy(openSession, a.sessionId, () => setNotice(t('ctxOpenFailed')))}>{t('open')}</button>
           </div>
+          {notice !== undefined && <div style={css.muted}>{notice}</div>}
+          {a.danger !== undefined && <div role="alert" style={{ ...css.pill(C.err), margin: '6px 0' }}>{t('dangerSandbox')}</div>}
           <div style={{ margin: '6px 0' }}>{a.reason}</div>
-          <div style={{ ...css.code, ...css.card, marginBottom: 8 }}>{a.summary}</div>
+          {a.truncated === true && <div style={{ ...css.pill(C.warn), marginBottom: 6 }}>{t('truncated')}</div>}
+          <ApprovalContextView t={t} ctx={a.context} />
+          {a.ai !== undefined && (
+            <div style={{ ...css.card, marginBottom: 6 }}>
+              <b>{t(a.ai.status === 'judging' ? 'aiJudging' : 'aiSplit')}</b>
+              {(a.ai.opinions ?? []).map((o: any) => (
+                <div key={o.judge} style={css.muted}><span style={css.pill(o.decision === 'allow' ? C.ok : o.decision === 'deny' ? C.err : C.warn)}>{o.decision}</span> {o.judge}: {o.reason}</div>
+              ))}
+            </div>
+          )}
+          <div style={{ ...css.code, ...css.card, marginBottom: 8, maxHeight: 360, overflow: 'auto' }}>{a.summary}</div>
           <div style={css.row}>
             <input style={css.input} placeholder={t('reasonPlaceholder')} value={reasons[a.id] ?? ''} onChange={e => setReasons({ ...reasons, [a.id]: e.target.value })} />
             <button type="button" disabled={busy === a.id} style={{ ...css.btn, ...css.btnAllow }} onClick={() => void decide(a.id, 'allow')}>{t('allow')}</button>

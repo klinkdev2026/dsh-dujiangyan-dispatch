@@ -10,6 +10,7 @@
  * them to an external orchestrator (Claude Code, Codex, …) over MCP.
  */
 import path from 'node:path'
+import { AiApproval, judgeKey, probeJudges } from './ai-approval.ts'
 import { ApprovalQueue } from './approvals.ts'
 import { ensureToken, publishEndpoint } from './auth.ts'
 import { resolveConfig, type Config } from './config.ts'
@@ -18,6 +19,7 @@ import { installGate } from './gate.ts'
 import type { HostContext } from './host.ts'
 import { AdmissionController } from './limiter.ts'
 import { installLlmHooks, RouteHealth, UsageMeter } from './llm-hooks.ts'
+import { LocalRules } from './local-rules.ts'
 import { LeaseManager } from './locks.ts'
 import { startMcpServer } from './mcp.ts'
 import { DispatchRegistry } from './registry.ts'
@@ -25,6 +27,7 @@ import { SessionManager } from './sessions.ts'
 import { appendJsonl, ensureDir } from './store.ts'
 import { TaskManager } from './tasks.ts'
 import { installWebRoutes } from './web-routes.ts'
+import { Watchdog } from './watchdog.ts'
 
 export type { Config } from './config.ts'
 
@@ -51,9 +54,14 @@ export function apply(ctx: HostContext, raw: Config = {}): void {
   const usage = new UsageMeter()
   const health = new RouteHealth()
   const leases = new LeaseManager(path.join(config.stateDir, 'locks'))
+  leases.onLost = (name, holder, now) => events.append('lease/lost', { name, holder, nowHeldBy: now?.holder, epoch: now?.epoch })
   const registry = new DispatchRegistry(ctx, config.stateDir)
   const sessions = new SessionManager(ctx, config, registry, events, health)
-  const tasks = new TaskManager({ ctx, config, sessions, registry, leases, events, usage })
+  const localRules = new LocalRules({ stateDir: config.stateDir, events, audit, base: () => config.rules })
+  localRules.reload()
+  localRules.watch()
+  const aiApproval = new AiApproval(() => config.aiApproval, () => localRules.aiApproval())
+  const tasks = new TaskManager({ ctx, config, sessions, registry, leases, events, usage, localFacts: cwd => localRules.effective(cwd).facts })
 
   installGate(ctx, {
     config,
@@ -63,17 +71,53 @@ export function apply(ctx: HostContext, raw: Config = {}): void {
     audit,
     heldResources: root => tasks.heldResources(root),
     runningTask: root => tasks.runningTask(root),
+    approvalContext: root => tasks.approvalContextFor(root),
+    localRules,
+    aiApproval,
+    benchHolder: () => leases.holder('bench')?.holder,
+    onDenyBreaker: (root, taskId, detail) => tasks.pauseForAttention(root, taskId, detail),
   })
   installLlmHooks(ctx, { limiter, usage, registry, events, health })
 
+  const presence: { lastSeenAt: number | undefined } = { lastSeenAt: undefined }
+  const watchdog = new Watchdog({
+    config, approvals, events, audit, aiApproval,
+    runningTasks: () => tasks.list({ status: 'running' }),
+    steer: (sessionId, text) => tasks.steer(sessionId, text, 'watchdog'),
+    lastClientSeen: () => presence.lastSeenAt,
+  })
+  const stopWatchdog = watchdog.start()
+  // Probe the judges once the host's providers are up, and again whenever the judge set changes.
+  let probedFor = ''
+  const probe = () => {
+    const ai = aiApproval.current()
+    const key = ai.enabled ? ai.judges.map(judgeKey).join('+') : ''
+    if (key === '' || key === probedFor) return
+    probedFor = key
+    void probeJudges(ctx, ai).then(opinions => {
+      for (const o of opinions) aiApproval.record(o, 'probe')
+      audit({ type: 'ai/probed', judges: opinions.map(o => ({ judge: o.judge, decision: o.decision, reason: o.reason.slice(0, 200), latencyMs: o.latencyMs })) })
+    }).catch(() => { probedFor = '' })
+  }
+  const probeTimer = setTimeout(probe, 5000)
+  probeTimer.unref?.()
+  const reprobe = setInterval(probe, 60_000)
+  reprobe.unref?.()
+
   const token = ensureToken(config.stateDir)
-  const mcpDeps = { ctx, config, token, registry, sessions, tasks, approvals, events, leases, limiter, usage, health, audit }
+  const mcpDeps = { ctx, config, token, registry, sessions, tasks, approvals, events, leases, limiter, usage, health, audit, localRules, aiApproval, watchdog, presence }
   const server = startMcpServer(mcpDeps)
   installWebRoutes(ctx, mcpDeps)
   publishEndpoint(config.stateDir, server.url)
   audit({ type: 'plugin/started', url: server.url, roots: config.workspaceRoots })
 
   ctx.effect(() => () => {
+    // Record unfinished tasks as interrupted before disposal unwinds their turns into a fake "done".
+    tasks.stop()
+    stopWatchdog()
+    clearTimeout(probeTimer)
+    clearInterval(reprobe)
+    localRules.close()
     approvals.cancelAll()
     leases.releaseAll()
     void server.close()

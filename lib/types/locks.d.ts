@@ -10,6 +10,8 @@ export declare class LeaseManager {
     private readonly heartbeats;
     private readonly queues;
     private readonly wakers;
+    /** Called when a held lease could not be renewed; `now` is whoever holds it at that moment. */
+    onLost?: (name: string, holder: string, now: LeaseRecord | undefined) => void;
     private readonly dir;
     private readonly ttlMs;
     private readonly now;

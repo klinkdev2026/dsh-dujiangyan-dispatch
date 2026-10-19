@@ -1,14 +1,17 @@
+import { type AiApproval } from './ai-approval.ts';
 import type { ApprovalQueue } from './approvals.ts';
 import type { ResolvedConfig } from './config.ts';
 import type { EventLog } from './events.ts';
 import type { HostContext } from './host.ts';
 import type { AdmissionController } from './limiter.ts';
 import { type RouteHealth, type UsageMeter } from './llm-hooks.ts';
+import type { LocalRules } from './local-rules.ts';
 import type { LeaseManager } from './locks.ts';
 import type { DispatchRegistry } from './registry.ts';
 import { type SessionManager } from './sessions.ts';
 import type { TaskManager } from './tasks.ts';
-export declare const VERSION = "0.1.0-alpha.1";
+import type { Watchdog } from './watchdog.ts';
+export declare const VERSION = "0.1.1";
 export interface McpDeps {
     readonly ctx: HostContext;
     readonly config: ResolvedConfig;
@@ -23,6 +26,14 @@ export interface McpDeps {
     readonly usage: UsageMeter;
     readonly health: RouteHealth;
     readonly audit: (record: Record<string, unknown>) => void;
+    readonly localRules: LocalRules;
+    readonly aiApproval: AiApproval;
+    /** Liveness alarms (approval aging, AI judge health, stalled tasks, orchestrator presence). */
+    readonly watchdog?: Watchdog;
+    /** Last authenticated MCP request, so the watchdog can tell when no orchestrator is watching. */
+    readonly presence?: {
+        lastSeenAt: number | undefined;
+    };
 }
 export declare function startMcpServer(deps: McpDeps): {
     url: string;

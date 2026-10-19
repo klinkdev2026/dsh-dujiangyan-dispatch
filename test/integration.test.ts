@@ -105,8 +105,10 @@ test('end to end: MCP auth, sessions, gate tiers, approvals, lineage, tasks', as
     assert.equal((await env.host.preExecute(child, 'mystery_tool', {})).kind, 'deny')
     const manual = await env.host.ctx.agents.create({ sessionId: 'manual', meta: { cwd: env.dir } })
     assert.equal((await env.host.preExecute(manual.agent, 'write', { file_path: path.join(env.dir, 'x'), content: '' })).kind, 'allow')
-    // timeout on a root session → falls back to the desktop's ask
-    assert.equal((await env.host.preExecute(agent, 'mystery_tool', {})).kind, 'ask')
+    // timeout on a root session → a safe deny telling the worker to resubmit (no desktop ask by default)
+    const timedOut = await env.host.preExecute(agent, 'mystery_tool', {})
+    assert.equal(timedOut.kind, 'deny')
+    assert.match((timedOut as { reason: string }).reason, /approval-timeout.*resubmit the same call unchanged/)
 
     // ── a task runs, its tool calls go through the gate, the summary is parsed ──
     env.host.scripts.set('make data', [
@@ -172,6 +174,13 @@ test('a listed-but-unusable route is probed, benched, and failed over to the nex
     let status = parse(await client.callTool({ name: 'djy_status', arguments: {} }))
     assert.ok(status.routeHealth.broken['relay/broken-model'])
     assert.equal(status.routeHealth.broken['relay/model-b'], undefined)
+    // health block: nothing pending, nothing stalled, AI approval off
+    assert.equal(status.health.pendingApprovals, 0)
+    assert.deepEqual(status.health.alerts, [])
+    assert.equal(status.health.ai.enabled, false)
+    assert.equal(typeof status.health.orchestratorLastSeenSec, 'number', 'the MCP call itself counts as orchestrator presence')
+    const ai = parse(await client.callTool({ name: 'djy_ai_approval_get', arguments: {} }))
+    assert.equal(ai.health.degraded, false)
 
     // 2. a session whose only route is benched is refused up front
     const refused = await client.callTool({ name: 'djy_session_create', arguments: { cwd: env.ws, route: { provider: 'relay', model: 'broken-model' } } })
@@ -194,6 +203,18 @@ test('a listed-but-unusable route is probed, benched, and failed over to the nex
     assert.equal(await requestError({ status: 400, message: 'This model maximum context length is 128000 tokens' }), undefined)
     status = parse(await client.callTool({ name: 'djy_status', arguments: {} }))
     assert.equal(status.routeHealth.broken['deepseek-official/deepseek-flash'], undefined)
+
+    // 5. at most one failover per request: a second deterministic failure right after the switch surfaces
+    const three = parse(await client.callTool({ name: 'djy_session_create', arguments: { cwd: env.ws, route: { provider: 'deepseek-official', model: 'deepseek-v4-pro', effort: 'high' }, fallbacks: [{ provider: 'deepseek-official', model: 'deepseek-flash' }] } }))
+    const agent3 = env.host.agentsById.get(three.sessionId) as FakeAgent
+    const request3 = () => env.host.waterfall<any>('agent/request', [{ agent: agent3 }], async () => ({ provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'high' }))
+    const error3 = () => env.host.waterfall<any>('agent/request-error', [{ agent: agent3, provider: 'deepseek-official', failure: { status: 404, message: 'model not found' } }], async () => undefined)
+    await request3()
+    assert.deepEqual(await error3(), { kind: 'retry' })
+    const moved = await request3()
+    assert.equal(moved.model, 'deepseek-flash')
+    assert.equal(moved.reasoningEffort, undefined, 'the effort id of the previous route is dropped on failover')
+    assert.equal(await error3(), undefined, 'no second failover within the same request')
 
     const events = parse(await client.callTool({ name: 'djy_events_watch', arguments: { cursor: 0, waitSeconds: 0 } }))
     assert.ok(events.events.some((e: any) => e.type === 'route/broken'))

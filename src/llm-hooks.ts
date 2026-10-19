@@ -146,6 +146,9 @@ export function installLlmHooks(
   const { limiter, usage, registry, events, health } = deps
   /** The route each dispatched session's latest request actually used (agent/request-error carries no model). */
   const lastRoute = new Map<string, { provider: string; model: string }>()
+  /** When a session last failed over: at most one failover per request (prior art: dsh-agent-teams selectFallbackRoute). */
+  const lastFailover = new Map<string, number>()
+  const FAILOVER_WINDOW_MS = 60_000
   const healthy = (e: RouteEntry) => !limiter.isOpen(e.provider) && !health.isBroken(e)
 
   /** A dead route must not count as provider overload, or one retired model would trip the breaker for the whole gateway. */
@@ -231,6 +234,11 @@ export function installLlmHooks(
     events.append('route/broken', { sessionId: payload.agent.session.id, root, route: RouteHealth.key(used), reason: message.slice(0, 300) })
     const chain = registry.get(root)?.chain ?? []
     if (!chain.some(healthy)) return next() // nothing left to fall back to: let the failure surface
+    // The retried step failed again on the next route too: surface it instead of walking the whole chain.
+    const sessionId = payload.agent.session.id
+    const last = lastFailover.get(sessionId)
+    if (last !== undefined && Date.now() - last < FAILOVER_WINDOW_MS) return next()
+    lastFailover.set(sessionId, Date.now())
     return { kind: 'retry' as const }
   }, { prepend: true })
 }

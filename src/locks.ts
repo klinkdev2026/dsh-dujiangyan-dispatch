@@ -35,6 +35,8 @@ export class LeaseManager {
   private readonly heartbeats = new Map<string, ReturnType<typeof setInterval>>()
   private readonly queues = new Map<string, object[]>()
   private readonly wakers = new Map<string, Set<() => void>>()
+  /** Called when a held lease could not be renewed; `now` is whoever holds it at that moment. */
+  onLost?: (name: string, holder: string, now: LeaseRecord | undefined) => void
 
   private readonly dir: string
   private readonly ttlMs: number
@@ -202,6 +204,8 @@ export class LeaseManager {
       if (this.renew(name, holder) === undefined) {
         clearInterval(hb)
         this.heartbeats.delete(key)
+        // Taken over (our renewals stalled past the TTL) or removed: say so instead of failing silently.
+        this.onLost?.(name, holder, this.read(name))
       }
     }, Math.max(1000, Math.floor(this.ttlMs / 3)))
     hb.unref?.()

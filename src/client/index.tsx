@@ -26,8 +26,42 @@ function Icon({ size }: { size?: number }) {
   )
 }
 
+/**
+ * Desktop notifications for watchdog alerts, so a waiting approval or a failing AI judge reaches
+ * the human even when this page is not open. Uses the renderer's standard Notification API (the
+ * host exposes no notification service to plugins); each alert notifies once.
+ */
+function startNotifier(t: (key: string) => string): () => void {
+  const shown = new Set<string>()
+  // Follow the event cursor so each poll carries only new events (the alerts are in the snapshot).
+  let cursor = 0
+  const tick = async () => {
+    try {
+      const res = await fetch(`/plugins/dsh-dujiangyan-dispatch/state?cursor=${cursor}`, { cache: 'no-store', credentials: 'same-origin' })
+      if (!res.ok) return
+      const snap = await res.json()
+      cursor = typeof snap.cursor === 'number' ? snap.cursor : cursor
+      const alerts: any[] = snap.health?.alerts ?? []
+      for (const a of alerts) {
+        const key = `${a.id}:${a.level}`
+        if (shown.has(key)) continue
+        shown.add(key)
+        const N = (globalThis as any).Notification
+        if (N === undefined) continue
+        if (N.permission === 'default') await N.requestPermission?.()
+        if (N.permission === 'granted') new N(`${t('panel')} · ${t('healthTitle')}`, { body: a.message, tag: a.id })
+      }
+    } catch {
+      // The panel route may be unavailable briefly during startup; try again next tick.
+    }
+  }
+  const timer = setInterval(() => void tick(), 15_000)
+  return () => clearInterval(timer)
+}
+
 export function apply(ctx: any): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dujiangyan: dictionaries')
+  ctx.effect(() => startNotifier(key => ctx.locale.bind(NS)(key)), 'dujiangyan: desktop notifications')
   const t = ctx.locale.bind(NS)
   const openSession = (id: string): boolean => {
     const ws = ctx.get?.('uiWorkspace')

@@ -9,6 +9,8 @@ export interface DispatchedSession {
     /** Dispatch batch: one orchestrator run (MCP connection) unless the caller names it. */
     readonly batch?: string;
     readonly cwd: string;
+    /** Paths (canonical, inside the roots) this session may write; absent = the whole workspace roots. */
+    readonly writeScope?: readonly string[];
     /** The route chain; requests use its first healthy entry. */
     readonly chain: readonly RouteEntry[];
     readonly createdAt: string;

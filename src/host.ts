@@ -24,8 +24,11 @@ export interface HostAgent {
   readonly session: HostSession
   readonly status?: string
   followup(message: unknown): void
+  /** Deliver a message at the running agent's next model step (not a new turn). */
+  steer?(message: unknown): void
   whenIdle(): Promise<void>
-  cancel(): void
+  /** The cause is required: the host records it as the turn/end reason, and the desktop chat view crashes on a null one. */
+  cancel(cause: AgentCancelCause): void
 }
 
 export interface AgentHandle {
@@ -63,6 +66,10 @@ export interface ApprovalRequestEvent {
   readonly reason?: string
   readonly signal?: AbortSignal
 }
+
+/** Host AgentCancelCause (core/session types.ts); we cancel as a hook. */
+export type AgentCancelCause = { readonly kind: 'user' } | { readonly kind: 'parent' } | { readonly kind: 'hook'; readonly reason: string } | { readonly kind: 'disposed' }
+export const DISPATCH_CANCEL: AgentCancelCause = Object.freeze({ kind: 'hook', reason: 'dujiangyan-dispatch/cancel' })
 
 export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
 
@@ -123,8 +130,12 @@ export interface HostContext {
       model: string
       messages: Array<{ role: 'user'; content: Array<{ type: 'text'; text: string }> }>
       maxTokens?: number
+      temperature?: number
+      reasoningEffort?: string
       signal?: AbortSignal
     }): AsyncIterable<StreamChunk>
+    /** Exact-route model metadata, including the selectable reasoning efforts (least first). */
+    resolveModelInfo?(provider: string, model: string, signal?: AbortSignal): Promise<{ readonly reasoning?: { readonly efforts: ReadonlyArray<{ readonly id: string }> } }>
   }
 }
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.1.1
+
+Lessons from running a mixed-model agent fleet for real: nothing may wait silently, the human approver needs context, and personal habits must be configurable without a release.
+
+**Approval (飞沙堰)**
+- **AI approval, opt-in, two judges must agree.** Grey calls that only touch the workspace can be decided by model judges: unanimous allow allows, unanimous deny denies, anything else stays pending for a human with every opinion attached. The call is nonce-fenced as data (prompt-injection text inside it changes nothing), secrets are redacted, each session has a judgment budget, and a judge that refuses `temperature: 0` is retried without it. Network or outward calls, anything outside the workspace roots, encoded commands, loader-environment changes and sandbox widening are never sent to a judge. Judges default to the user's own roster (reviewer, planner, implementer); no model is assumed.
+- **Approval context.** Every pending item carries the task, session, route, the worker's latest explanation, the call's own description and the earlier gated calls of the task; the panel has an "open session" button.
+- **Nothing waits silently (watchdog).** Pending approvals raise alerts as they age and the worker is told it is waiting; at the timeout the call is denied safely and the host's follow-up sandbox escalation for the same call is rejected instead of queued (`fallbackToHuman` now defaults to off). Silent tasks, an absent orchestrator and a degraded AI judge are reported; `djy_status` has a health block; the panel raises desktop notifications.
+- **Gate parser.** Real-world PowerShell, git global options before push/remote/config, write targets per session, attached redirects (`>f`, `2>&1`) can no longer hide a write target. A deny breaker pauses a task after repeated denials.
+
+**Workers**
+- `djy_session_steer` corrects a running worker at its next step; `note` on `djy_approval_decide` says something along with a decision.
+- Task prompts end with an environment-facts footer (disk, known sandbox behaviour, personal facts) and a narration rule, so approvers can see what a worker is doing.
+- A worker that asks the user a question ends its task as `needs_input` instead of hanging.
+- **Quiet mode.** While a task holds `bench`, heavy commands from other sessions wait (also after an approval), so measurements stay clean.
+
+**Personal rules, hot-reloaded.** `~/.dsh/dujiangyan/local-rules.json` (rules, hints, facts, per-workspace overrides, `aiApproval`, `quietMode`) is reloaded on change, no restart or release needed.
+
+**Restarts.** Idle sessions resume after a desktop restart with their route and permission preset; tasks cut by a restart end as `interrupted` (not `done`); the event log carries an epoch so watchers detect the reset.
+
+**Fixes**
+- Cancelling a task passed no cause to `agent.cancel()`; the host logged `turn/end` with a null reason and the desktop chat view went blank for every conversation. All cancels now pass a cause.
+- A busy MCP port no longer crashes the host; a lease taken over after stalled renewals is reported (`lease/lost`) and no longer grants bench rights; cancelled slot waiters leave the queue; secret masking matches whole words (`api_key`, not `monkey`); summaries never split a surrogate pair; failover happens at most once per request window.
+
 ## 0.1.0-alpha.1
 
 First pre-release.

@@ -1,7 +1,7 @@
 {
   "name": "dsh-dujiangyan-dispatch",
   "description": "Dujiangyan · DSH Agent Dispatch & Guard — let Claude Code, Codex, Kimi Code or any MCP client command any number of mixed-model DeepSeek Harness agents behind one permission gate, per-key admission control and resource leases.",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.1",
   "license": "MIT",
   "author": "klinkdev2026",
   "homepage": "https://github.com/klinkdev2026/dsh-dujiangyan-dispatch#readme",
@@ -29,7 +29,7 @@
     "lib",
     "cordis.patch.yml",
     "README.md",
-    "README.en.md",
+    "README.zh-CN.md",
     "LICENSE",
     "NOTICE.md",
     "LESSONS.md",

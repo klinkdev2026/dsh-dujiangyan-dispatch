@@ -1,113 +1,118 @@
-<p align="right"><strong>简体中文</strong> · <a href="./README.en.md">English</a></p>
+<p align="right"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
 
 <p align="center">
-  <img src="./assets/hero.zh.png" width="100%" alt="都江堰：用任意 AI 客户端，通过一道闸门，指挥任意数量、任意模型的 DeepSeek Harness agent">
+  <img src="./assets/hero.en.png" width="100%" alt="Dujiangyan: command any number of mixed-model DeepSeek Harness agents from any AI client, through one gate">
 </p>
 
 <p align="center">
   <a href="https://github.com/klinkdev2026/dsh-dujiangyan-dispatch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/klinkdev2026/dsh-dujiangyan-dispatch/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.1.0--alpha.1-0B7285?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-0.1.1-0B7285?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-%E2%89%A50.2.1--rc.2-4D8DFF?style=flat-square" alt="DeepSeek Harness >= 0.2.1-rc.2">
   <img src="https://img.shields.io/badge/MCP-Streamable%20HTTP-5FE0C0?style=flat-square" alt="MCP">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6F93A6?style=flat-square" alt="platforms">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-2E8B57?style=flat-square" alt="MIT"></a>
 </p>
 
-<h3 align="center">让 Claude Code、Codex、Kimi Code……指挥一整支 DeepSeek Harness 军团。<br>每一次工具调用都过闸门，每一个 API key 都不被冲垮。</h3>
+<h3 align="center">Let Claude Code, Codex, Kimi Code… command a whole DeepSeek Harness legion.<br>Every tool call goes through the gate; no API key gets flooded.</h3>
 
 ---
 
-你在 Claude Code 里说一句：
+Say this in your AI client:
 
-> 开 3 个 flash 写代码，1 个 kimi 审核，干完把结果汇总给我。
+> Open 3 coders and 1 reviewer on a different model, then give me a combined summary.
 
-**都江堰**会在你正在运行的 **DeepSeek Harness 桌面版**里拉起这些 agent，然后接管所有麻烦的事：
+**Dujiangyan** starts those agents inside the **DeepSeek Harness desktop app** you already run, and takes care of everything that makes this hard:
 
 | | |
 |---|---|
-| 🧭 **任意客户端都能指挥** | Claude Code、Codex、Kimi Code、智谱、pi、Cursor……只要支持 MCP，就能派活、看进度、做审批 |
-| 🌊 **任意数量、任意模型** | 会话数不设上限；每个角色配一条模型链（DeepSeek、Kimi、GLM、Qwen、任意 OpenAI 兼容中转都行），坏了自动换下一个 |
-| 🛡️ **每一次工具调用都过闸门** | 安全的直接放行，危险的拒绝并说明理由，拿不准的交给 AI 审批人，AI 也拿不准再交给你。agent 自己拉起的子 agent 也逃不掉 |
-| 🚰 **按 key 准入，不冲垮你的额度** | 每家 key 单独限并发、错峰发送、遇到 429 自动收窄、熔断后切备用模型、恢复后切回 |
-| 🔒 **独占资源排队** | 跑基准测试时独占机器，别的 agent 的编译不会来抢 CPU |
-| 👀 **全程看得见** | 桌面版左侧栏多一个“都江堰”面板：会话、任务、闸门记录、待审批、渠道健康，一目了然；每个 agent 都是普通会话，随时点开看 |
+| 🧭 **Any client can command** | Claude Code, Codex, Kimi Code, Zhipu, pi, Cursor… anything that speaks MCP can dispatch work, follow progress and approve calls |
+| 🌊 **Any number, any model** | No session cap. Each role gets a model chain (DeepSeek, Kimi, GLM, Qwen, any OpenAI-compatible gateway); a broken model is skipped automatically |
+| 🛡️ **Every tool call is gated** | Safe calls pass, dangerous ones are denied with a reason, only grey ones are held: optional AI judges first, then you, with full context. Sub-agents the workers spawn are gated too |
+| 🚰 **Per-key admission** | Each key gets its own concurrency cap, spaced sends, automatic narrowing on 429, a circuit breaker with failover, and a return to the preferred model once it recovers |
+| 🔒 **Exclusive resources** | A benchmark holds the machine to itself; other agents' builds wait instead of stealing CPU (quiet mode) |
+| 👀 **Nothing waits silently** | A "Dujiangyan" panel in the desktop sidebar shows sessions, tasks, gate log, approvals and route health; aging approvals and stalled tasks raise alerts and desktop notifications |
 
 <p align="center">
-  <img src="./assets/screenshots/overview.zh.png" width="100%" alt="都江堰面板：概览">
-  <br><sub>桌面版里的都江堰面板（演示数据）：3 个客户端派出的 10 个会话、4 家渠道的并发和熔断状态、最近的闸门决定</sub>
+  <img src="./assets/screenshots/overview.en.png" width="100%" alt="Dujiangyan panel: overview">
+  <br><sub>The Dujiangyan panel in the desktop app (demo data): 10 sessions from 3 clients, concurrency and breaker state for 4 providers, recent gate decisions</sub>
 </p>
 
-## 它由两半组成
+## Dams fail. Dujiangyan doesn't.
 
-都江堰装一次，就同时有两张面孔：
+Most agent permission systems are **dams**. They block everything and ask the human, again and again, hundreds of times a day. Sooner or later the human gives up and runs with `--dangerously-skip-permissions`. The dam bursts, and the result is worse than having no dam at all: no checks, and a habit of clicking "yes".
 
-| | 🏯 **DSH 这一半：插件** | 🤖 **agent 这一半：MCP 服务** |
+**Dujiangyan** is an irrigation system in Sichuan. It was built over 2,200 years ago, it still runs today, and it has no dam. It does not block the Min River. It **divides** it:
+
+| Part | At Dujiangyan | Here |
 |---|---|---|
-| 给谁用 | 你，在 DeepSeek Harness 桌面版里 | 你的 AI 客户端（Claude Code、Codex、Kimi Code……） |
-| 做什么 | 闸门拦截每一次工具调用、按 key 准入、模型路由、独占锁；左侧栏的审查面板 | 17 个 `djy_*` 工具：开会话、派任务、看进度、做审批、查渠道；外加写给 agent 的接入说明 `CONNECT.md` |
-| 在哪里 | 运行在桌面版进程里 | 同一个进程开在 `127.0.0.1:8790/mcp`，令牌鉴权 |
+| **Fish Mouth** | A levee that splits the river into two channels | **Routing**: each role has a model chain; requests take the first healthy model, and a tripped breaker fails over down the chain |
+| **Flying Sand Weir** | On the bend, sand is thrown out while the main flow passes | **The gate**: safe calls pass on their own, dangerous ones are denied with a reason the agent can act on, only the grey ones are lifted out for review |
+| **Bottle-Neck** | Controls how much water enters the plain | **Per-key admission**: adaptive concurrency, spacing, narrowing on 429, a circuit breaker |
 
-两半是同一个包，不需要分开安装：MCP 服务要靠插件的钩子才能创建会话、拦截调用、限流，所以它们必须在同一个进程里。
+The old rule of the weir keepers is *"dig the channel deep, keep the weir low"* (深淘滩，低作堰). Intervene as little as possible. Never fight the agent's productivity. Only divert what would flood the fields: your keys and quota, your money, your machine, your files, and your attention.
 
-## 目录
+### What makes the approval different
 
-- [为什么叫都江堰](#为什么叫都江堰)
-- [和同类项目有什么不同](#和同类项目有什么不同)
-- [快速开始](#快速开始)
-- [飞沙堰：权限闸门](#飞沙堰权限闸门)
-- [宝瓶口：准入控制](#宝瓶口准入控制)
-- [鱼嘴：多模型路由](#鱼嘴多模型路由)
-- [桌面面板](#桌面面板)
-- [平台与客户端支持](#平台与客户端支持)
-- [配置参考](#配置参考) · [MCP 工具](#mcp-工具) · [安全](#安全) · [排错](#排错)
-- [路线图](#路线图) · [从源码构建](#从源码构建) · [致谢](#致谢)
+- **Every tool call is gated**, including the sub-agents a worker spawns and sandbox escalations requested from inside a tool.
+- **A denial is advice, not a wall.** The worker gets the reason (for example "write outside the workspace" or "use the bench lease") and adapts instead of working around the gate. A worker that keeps hitting denials is paused by a deny breaker.
+- **Grey calls can go to AI judges first (opt-in).** The judges must all agree, and there are two by default: unanimous allow allows, unanimous deny denies, anything else goes to a human with every opinion attached. The call is fenced as data with a random marker, so prompt-injection text inside it changes nothing. Secrets are redacted, and each session has a judgment budget. Network and outward calls, anything outside the workspace, encoded commands and sandbox widening are **never** judged by AI.
+- **The human approver gets full context**: the task, the worker's own explanation, the call's description, the earlier gated calls of the task, and an "Open session" button to read the whole transcript.
+- **Nothing waits silently.** A watchdog tells the waiting worker to hold the call, raises alerts as an approval ages, reports stalled tasks, an absent orchestrator and failing AI judges, and the panel shows desktop notifications. At the timeout the call is denied with "resubmit unchanged", instead of turning into a confusing desktop prompt.
+- **Quiet mode** keeps benchmarks clean: while one task holds the `bench` lease, heavy builds and tests from other sessions wait.
+- **Your own rules, hot-reloaded.** Personal allow/deny patterns, hints, facts and AI settings live in `~/.dsh/dujiangyan/local-rules.json` and apply on save. No restart, no release. Workers cannot write that file.
 
-## 为什么叫都江堰
+> **Other tools build dams, and dams fail. This one builds a Dujiangyan.**
 
-都江堰是两千多年前修建、至今仍在灌溉成都平原的水利工程。它没有用一道大坝把岷江拦死，而是**分流、排沙、限量**，这叫“无坝引水”。
+## Two halves, one install
 
-**都江堰保护的是平原，不是江。** 放到这里：
-
-- **江水**是一群 agent 同时涌出的请求和操作；
-- **平原**是你自己这一侧：API key 的并发和额度、你的钱、你的电脑（编译和基准测试会互相抢 CPU）、你的项目文件，还有你的注意力（审批请求不能一下子全涌给你）。
-
-同时开 10 个 agent 冲不垮任何一家厂商，却很容易冲垮你这一侧。
-
-| 都江堰的部件 | 在都江堰里做什么 | 在本插件里做什么 |
+| | 🏯 **The DSH half: plugin** | 🤖 **The agent half: MCP server** |
 |---|---|---|
-| **鱼嘴** | 江心的分水堤，把岷江分成内江和外江 | **多模型路由**：每个角色一条模型链，请求走第一个健康的模型 |
-| **飞沙堰** | 洪水和泥沙从这里溢出排走 | **权限闸门 + 熔断**：危险操作在这里被拦下；出故障的渠道被暂时撤下 |
-| **宝瓶口** | 控制进入灌区的水量 | **准入控制**：按 key 限并发；遇到限流自动收窄，恢复后逐步放开 |
-| **灌区** | 被灌溉的成都平原 | **agent 干活的地方**：会话、任务队列、独占锁 |
+| For | You, inside the DeepSeek Harness desktop app | Your AI client (Claude Code, Codex, Kimi Code…) |
+| Does | Gates every tool call, per-key admission, model routing, leases, watchdog; the review panel in the sidebar | 23 `djy_*` tools to open sessions, dispatch and steer tasks, follow progress, approve, manage rules and probe routes; plus an agent-facing `CONNECT.md` |
+| Runs | Inside the desktop app's process | Same process, on `127.0.0.1:8790/mcp`, token-authenticated |
 
-“无坝引水”也是闸门的设计原则：确定安全的直接放行，确定危险的直接拒绝并说明理由，只有中间的灰色地带才交给审批。**疏导，而不是拦死。**
+It is one package on purpose: the MCP server needs the plugin's hooks to create sessions, intercept calls and meter requests, so both halves must live in the same process.
 
-## 和同类项目有什么不同
+## Contents
 
-DeepSeek Harness 社区已经有不少优秀的多 agent 插件。都江堰不在 DSH 内部再造一个“队长”，而是解决另一件事：**让外部的 AI 客户端安全地指挥 DSH**。
+- [Dams fail. Dujiangyan doesn't.](#dams-fail-dujiangyan-doesnt)
+- [How it differs](#how-it-differs)
+- [Quick start](#quick-start)
+- [Flying Sand Weir: the permission gate](#flying-sand-weir-the-permission-gate)
+- [Bottle-Neck: admission control](#bottle-neck-admission-control)
+- [Fish Mouth: multi-model routing](#fish-mouth-multi-model-routing)
+- [Working with workers](#working-with-workers)
+- [Desktop panel](#desktop-panel)
+- [Platforms and clients](#platforms-and-clients)
+- [Configuration](#configuration) · [MCP tools](#mcp-tools) · [Security](#security) · [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap) · [Build from source](#build-from-source) · [Acknowledgements](#acknowledgements)
 
-| | **都江堰** | dsh-agent-teams | dsh-crew | dsh-harness-mcp-server |
+## How it differs
+
+The DeepSeek Harness community already has excellent multi-agent plugins. Dujiangyan does not build another "captain" inside DSH; it solves a different problem: **letting external AI clients command DSH safely**.
+
+| | **Dujiangyan** | dsh-agent-teams | dsh-crew | dsh-harness-mcp-server |
 |---|---|---|---|---|
-| 谁来指挥 | **任意 MCP 客户端**（Claude Code、Codex、Kimi Code……），可以同时多个 | DSH 里的队长会话 | Claude / Codex | 任意 MCP 客户端 |
-| agent 数量 | **不设上限**，请求在准入层统一限流 | 默认最多 8 名成员（可调） | — | 不限 |
-| 多模型 | ✅ 每个角色一条模型链，自动跳过坏路由、故障切换 | ✅ 每个成员可指定模型 | — | — |
-| 每次工具调用的权限闸门 | ✅ 放行 / 拒绝并说明 / 转审批，覆盖子 agent | 按成员的工具策略（其文档说明不是授权边界） | ❌ | ❌ |
-| 审批 | ✅ AI 审批人 → 再交给你（面板一键决定） | 成员需要审批的操作会被自动拒绝 | ❌ | ❌ |
-| 按 key 准入、429 收窄、熔断切换 | ✅ | ❌ | ❌ | ❌ |
-| 独占资源锁 | ✅ | ❌ | ❌ | ❌ |
-| 鉴权 | ✅ 仅本机 + Bearer 令牌 + 防 CSRF | — | ❌ HTTP 无鉴权 | ❌ |
-| 任务依赖图、成员互发消息 | ❌（交给指挥方） | ✅ 这是它的强项 | — | — |
-| 平台 | Windows / macOS / Linux | 跨平台 | 仅 POSIX | 跨平台 |
+| Who commands | **Any MCP client** (Claude Code, Codex, Kimi Code…), several at once | A captain session inside DSH | Claude / Codex | Any MCP client |
+| Number of agents | **Unlimited**; requests are metered at the admission layer | Up to 8 members by default (configurable) | — | Unlimited |
+| Multiple models | ✅ Model chain per role, broken routes skipped, failover | ✅ Per-member model | — | — |
+| Gate on every tool call | ✅ Allow / deny with reason / escalate, sub-agents included | Per-member tool policy (documented as not an authorization boundary) | ❌ | ❌ |
+| Approvals | ✅ Optional AI judges (must agree), then you with full context | Member calls that need approval are auto-rejected | ❌ | ❌ |
+| Per-key admission, 429 narrowing, breaker failover | ✅ | ❌ | ❌ | ❌ |
+| Exclusive leases, quiet mode | ✅ | ❌ | ❌ | ❌ |
+| Authentication | ✅ Loopback + bearer token + CSRF guard | — | ❌ Unauthenticated HTTP | ❌ |
+| Task DAG, member messaging | ❌ (left to the commanding agent) | ✅ Its strength | — | — |
+| Platforms | Windows / macOS / Linux | Cross-platform | POSIX only | Cross-platform |
 
-> 两者并不冲突：dsh-agent-teams 擅长在 DSH 内部做依赖图式的团队协作；都江堰擅长把 DSH 变成外部 agent 可以安全调用的“算力军团”。
+> They complement each other: dsh-agent-teams excels at DAG-style teamwork inside DSH; Dujiangyan turns DSH into a compute legion that outside agents can drive safely.
 
-## 快速开始
+## Quick start
 
-### 1. 安装
+### 1. Install
 
-> ⏳ **npm 发布进行中。** 发布后在桌面版 **插件 → 添加插件** 输入 `dsh-dujiangyan-dispatch` 即可一键安装。在那之前，请用下面的命令行方式或[从源码构建](#从源码构建)。
+> ⏳ **npm release in progress.** Once published, open **Plugins → Add plugin** in the desktop app and enter `dsh-dujiangyan-dispatch`. Until then, use the command line below or [build from source](#build-from-source).
 
-**命令行安装**（先**完全退出桌面版**，包括托盘图标）：
+**Command line** (first **quit the desktop app completely**, including the tray icon):
 
 ```powershell
 # Windows
@@ -115,230 +120,339 @@ DeepSeek Harness 社区已经有不少优秀的多 agent 插件。都江堰不�
 ```
 
 ```bash
-# macOS / Linux：使用桌面版安装目录里的 resources/runtime/cli/bin/dsh
-<安装目录>/resources/runtime/cli/bin/dsh plugin --profile desktop add github:klinkdev2026/dsh-dujiangyan-dispatch
+# macOS / Linux: use resources/runtime/cli/bin/dsh inside the desktop app's install directory
+<install dir>/resources/runtime/cli/bin/dsh plugin --profile desktop add github:klinkdev2026/dsh-dujiangyan-dispatch
 ```
 
-> 必须使用桌面版自带的 `dsh`。用 npm 全局安装的 `dsh` 管不了桌面版的配置。
+> Use the `dsh` bundled with the desktop app. A globally installed npm `dsh` cannot manage the desktop profile.
 
-### 2. 指定工作区（必填）
+### 2. Set the workspace (required)
 
-编辑 `~/.dsh/profiles/desktop/cordis.patch.yml`，在末尾追加，指定 agent 可以写入的目录：
+Append this to `~/.dsh/profiles/desktop/cordis.patch.yml` to name the directories agents may write to:
 
 ```yaml
 - id: dujiangyan-dispatch
   name: dsh-dujiangyan-dispatch
   config:
     workspaceRoots:
-      - 'D:\work\my-project'      # macOS/Linux 例如 /home/me/my-project
+      - '/home/me/my-project'     # or 'C:\work\my-project' on Windows
 ```
 
-不配置 `workspaceRoots`，所有会话都会被拒绝。改完后重启桌面版，左侧栏会出现 **都江堰** 图标。
+Without `workspaceRoots`, every session is refused. Restart the desktop app; a **Dujiangyan** icon appears in the sidebar.
 
-### 3. 让你的 AI 客户端接上
+### 3. Connect your AI client
 
-插件启动后，会在 `~/.dsh/dujiangyan/CONNECT.md` 生成一份**写给 agent 看的接入说明**。你只要在正在用的客户端里（Claude Code、Codex、Kimi Code、智谱、pi 都行）对 agent 说：
+On start, the plugin writes an **agent-facing connection guide** to `~/.dsh/dujiangyan/CONNECT.md`. In the client you use (Claude Code, Codex, Kimi Code, Zhipu, pi…), tell its agent:
 
-> 请阅读 `~/.dsh/dujiangyan/CONNECT.md`，按说明把你所在的 MCP 客户端接入都江堰（服务名 djy）。不要显示令牌。接好后调用 djy_status 告诉我版本号。
+> Read `~/.dsh/dujiangyan/CONNECT.md` and connect your MCP client to Dujiangyan (server name djy) as it describes. Do not show the token. When done, call djy_status and tell me the version.
 
-它会按自己客户端的配置方式完成接入，令牌只写进配置，不在对话里显示。想自己动手，或者想看已验证客户端的写法，见 **[docs/CONNECT.md](docs/CONNECT.md)**。
+The agent configures its own client in that client's format and writes the token only into the configuration. For manual setup and verified client configs, see **[docs/CONNECT.md](docs/CONNECT.md)**.
 
-### 4. 派出第一个任务
+### 4. Dispatch your first task
 
-> 用 djy 开一个 implementer 会话，工作目录 D:/work/my-project，让它列出项目结构，并写一份 NOTES.md。
+> Use djy to open an implementer session in /home/me/my-project, list the project structure and write NOTES.md.
 
-agent 会先调用 `djy_guide` 读使用手册，然后创建会话、提交任务、跟踪进度、处理审批。打开桌面版的 **都江堰** 面板，就能看到它在干什么。
+The agent reads `djy_guide`, creates the session, submits the task, follows progress and handles approvals. Open the **Dujiangyan** panel to watch.
 
-> 💡 **会话是长期存在的“工人”，不要做完一个任务就关掉。** 同一个会话上的任务按顺序执行并保留上下文；后续工作先用 `djy_session_list` 找到已有会话复用。
+> 💡 **Sessions are long-lived workers; do not close one after each task.** Tasks on a session run in order and keep context. For follow-up work, find an existing session with `djy_session_list` and reuse it.
 
-## 飞沙堰：权限闸门
+## Flying Sand Weir: the permission gate
 
-<p align="center"><img src="./assets/gate.zh.png" width="100%" alt="飞沙堰：权限闸门流程"></p>
+<p align="center"><img src="./assets/gate.en.png" width="100%" alt="Flying Sand Weir: the permission gate"></p>
 
-闸门只作用于**都江堰派出的会话和它们的子 agent**；你在桌面版里手动开的会话完全不受影响。
+The gate applies only to **sessions dispatched by Dujiangyan and their sub-agents**. Sessions you open by hand are unaffected.
 
-| 档位 | 内容 |
+| Tier | Contents |
 |---|---|
-| ✅ **自动放行** | 读文件、搜索；在工作区内写和改文件；`cargo` / `python` / `node` / `cmake` 等构建运行；`git status/diff/add/commit` 等本地操作；只读的 shell 命令；工作区里自己的脚本 |
-| ⛔ **拒绝，并告诉 agent 为什么** | 写工作区以外；读凭据文件、打印含 key 的环境变量；全局或系统级安装；改注册表、`setx`；**改 ACL、完整性标签或沙箱设置**（属于环境问题，应交给你处理）；`git push`、改远程仓库；向外上传数据；`run_code`（它的程序体不经过闸门）；agent 自行拉起子 agent；改插件或 Harness 配置；没拿到 bench 锁就跑基准测试 |
-| ❓ **交给审批** | 其余所有调用：网络访问、`pip/npm install`、`git clone`、动态执行代码、目标无法确定的删除、不认识的命令 |
+| ✅ **Allowed** | Reads and searches; writes and edits inside the session's write scope; builds and runs (`cargo`, `python`, `node`, `cmake`…); local git (`status/diff/add/commit`); read-only shell commands; the workspace's own scripts |
+| ⛔ **Denied, with the reason** | Writes outside the workspace or outside the session's write scope; reading credential files or printing key-bearing environment variables; global or system installs; registry and `setx`; **ACL, integrity-label or sandbox changes** (environment issues belong to you); `git push` and remote changes; uploads; `run_code` (its body bypasses the gate); agents spawning their own sub-agents; plugin or Harness configuration (including `local-rules.json`); benchmarks without the bench lease |
+| ❓ **Held for approval** | Everything else: network access, `pip/npm install`, `git clone`, dynamic code execution, deletes with unresolvable targets, unknown commands |
 
-- **审批顺序**：先交给接入的 AI 客户端（它应当自己核实，而不是相信 worker 的说法）；也可以你自己在面板上点“批准”或“拒绝”。先到的决定生效，审计日志记录是谁做的决定。
-- **审批超时**（默认 15 分钟）后：根会话交给桌面版自己的审批弹窗；子 agent 的审批策略固定为 `never`，所以直接拒绝。
-- 拒绝理由会原样回给 agent，它会改用正确的做法，而不是想办法绕过去。
+**Who decides a held call.** The first decision wins, and the audit log records who made it:
 
-<p align="center"><img src="./assets/screenshots/approvals.zh.png" width="100%" alt="待审批页面"></p>
+1. **AI judges** (if enabled, and only for workspace-confined calls; see below);
+2. **the connected AI client** (the orchestrator), which should verify independently rather than trust the worker;
+3. **you**, with one click in the panel.
 
-## 宝瓶口：准入控制
+**On timeout** (15 minutes by default) the call is denied with "resubmit the same call unchanged", and the host's follow-up sandbox prompt for that call is rejected, so a refused call is never approved by accident as a sandbox escalation. Set `fallbackToHuman: true` to hand timed-out root-session calls to the desktop's own prompt instead.
 
-<p align="center"><img src="./assets/admission.zh.png" width="100%" alt="宝瓶口：准入控制"></p>
+**Deny breaker.** Three gate or AI denials in a row (or 6 of the last 10 verdicts) pause the task as `needs_attention`, so a worker that keeps rephrasing a refused action stops burning turns. Denials by you or the orchestrator are guidance and do not count.
 
-**会话数、任务数和请求并发是三件不同的事：**
+**Write scope.** Each session may write only inside its own scope: by default its working directory when that is a subfolder of a root. Workers that share a root cannot overwrite each other.
 
-- **会话数**：有多少个“工人”。**不限**，闲着的会话不花钱。
-- **任务数**：每个会话上排着多少活。**不限**，同一会话上的任务按顺序执行。
-- **请求并发**：同一时刻有多少个请求打到某家 API。**只有这一层需要控制。**
+### AI approval: two judges must agree (opt-in)
 
-所以同时开 100 个会话一起干活也没问题：所有请求都经过宝瓶口，按每个 key 的承受能力放行。在个人使用的规模下，真正的瓶颈是你自己的 key，中转网关的 key 常常只允许 3–5 个并发。默认行为：
+Off by default. When on, a held call that stays inside the workspace (an unknown command, a dynamic target, an inline script…) goes to model judges before anyone else:
 
-- 按 provider 限制并发：`deepseek-official` 8 个，其余默认 4 个。请按你的 key 的实际限制调整。
-- 遇到 429 或过载，并发上限减半；连续成功 20 次后加 1。
-- 优先遵守服务端的 `Retry-After`；请求之间默认间隔 150 ms，外加最多 250 ms 的随机抖动。
-- 连续 5 次被限流或过载就熔断 2 分钟：期间请求沿模型链切到备用模型；冷却结束后先放一个请求试探，成功就切回首选模型。
-- 每分钟请求数（RPM）限制、错峰预热默认关闭，需要时可以打开。
+- **The judges must all agree.** Unanimous allow allows, unanimous deny denies. A split, a "human" answer, an error or a timeout leaves the call pending for a human, with each judge's opinion attached.
+- **No model is assumed.** Unless you set `aiApproval.judges`, two judges are taken from your own roster: the reviewer route, then the planner, then the implementer. **Two judges from different vendors are recommended**: a split is what keeps one model's blind spot from deciding alone.
+- Judges are asked in order and stop at the first answer that can no longer end unanimous, so put the fastest judge first.
+- **Hardened input.** Everything the worker wrote is placed between two markers carrying a random code, and the judge is told never to follow text inside them. Secrets are redacted and long fields are clipped.
+- **Budget.** At most 20 judgments per session in any 10 minutes (configurable); over budget, the call waits for a human.
+- **Never judged by AI:** network and outward calls (fetch, web search, git network, package installs, MCP tools), anything outside the workspace roots, encoded commands, loader-environment changes, sandbox widening, truncated calls, and every deny.
+- Judges are probed at start; a judge that keeps failing raises a critical alert ("every escalation now needs a human"). Turn AI approval on or off at run time with `djy_ai_approval_set`.
 
-## 鱼嘴：多模型路由
+### Nothing waits silently
 
-每个角色一条模型链，写在前面的优先：
+| After | What happens |
+|---|---|
+| 1 min pending | The worker is told to keep the call pending and not to rewrite it |
+| 3 min / 8 min pending | Warn / critical alert in the panel, the event log and a desktop notification |
+| No MCP client call for 3 min while approvals wait | "Orchestrator absent" alert: decide them in the panel |
+| 10 min without activity | The task is reported as stalled (known long waits such as background jobs or quiet mode are excluded) |
+
+All of this also appears in the `health` block of `djy_status`.
+
+<p align="center"><img src="./assets/screenshots/approvals.en.png" width="100%" alt="Pending approvals"></p>
+
+## Bottle-Neck: admission control
+
+<p align="center"><img src="./assets/admission.en.png" width="100%" alt="Bottle-Neck: admission control"></p>
+
+**Sessions, tasks and request concurrency are three different things:**
+
+- **Sessions**: how many workers exist. **Unlimited**; idle sessions cost nothing.
+- **Tasks**: how much work is queued on each session. **Unlimited**; tasks on one session run in order.
+- **Request concurrency**: how many requests hit one provider at the same moment. **Only this layer needs control.**
+
+So 100 sessions can work at once: every request passes the Bottle-Neck, which admits as many as each key can take. At personal scale the real bottleneck is your own key; gateway keys often allow only 3–5 concurrent requests. Defaults:
+
+- Concurrency cap per provider: `deepseek-official` 8, any other provider 4. Set these to your keys' real limits.
+- On 429 or overload the cap halves; after 20 consecutive successes it grows by one.
+- `Retry-After` is honoured when the provider sends it; requests are spaced 150 ms apart plus up to 250 ms of random jitter.
+- Five rate limits or overloads in a row open the breaker for 2 minutes: requests move down the model chain; after the cooldown one probe request goes through, and on success traffic returns to the preferred model.
+- RPM windows and staggered warm-up are off by default and can be enabled.
+
+**Bench lease and quiet mode.** A task submitted with `resources: ["bench"]` holds the machine. Benchmark commands are denied without that lease. While it is held, heavy commands from other sessions (`cargo build/test/…`, `npm/pnpm/yarn test/build`, plus your own patterns) wait, even after an approval. After 30 minutes they are held for approval as `quiet-timeout`.
+
+## Fish Mouth: multi-model routing
+
+Each role has a model chain; earlier entries win:
 
 ```yaml
 roster:
   implementer:
     - { provider: deepseek-official, model: deepseek-flash }
-    - { provider: my-relay, model: qwen-coder }          # 备用
+    - { provider: my-gateway, model: qwen-coder }          # fallback
   reviewer:
-    - { provider: moonshot, model: kimi-latest }
+    - { provider: another-vendor, model: their-model }     # a different vendor reviews
     - { provider: deepseek-official, model: deepseek-v4-pro }
 ```
 
-- 模型链里的 provider 和模型，就是你在桌面版里已经配好的那些，不用再配一遍 key。可以用 `djy_models` 查看。
-- `djy_routes_probe` 用一个极小的真实请求逐个检查模型是否真能用。渠道目录里列出来、实际一调就失败的模型（比如 API 格式不匹配）会被停用 30 分钟，会话自动跳过它。
-- 运行中遇到确定性错误（400/401/403/404/422，因上下文过长导致的 400 除外），这条路由会被停用，当前这一步沿模型链换下一个模型重试。
+- Providers and models are the ones already configured in your desktop app; no keys are configured twice. List them with `djy_models`.
+- `djy_routes_probe` checks each model with a tiny real request. A model that a gateway lists but cannot serve (for example an API dialect mismatch) is benched for 30 minutes and sessions skip it.
+- Deterministic errors at run time (400/401/403/404/422, except context-length 400s) bench the route, and the current step retries on the next model in the chain.
 
-## 桌面面板
+## Working with workers
 
-安装后，桌面版左侧栏会多出 **都江堰** 入口，有五个页签：
+- **Task prompts carry a footer**: the working rules, an environment-facts block (free disk space measured at task start, known sandbox behaviour, your own facts from `local-rules.json`) and a **narration rule**: before each tool call the worker writes one sentence on what it is about to do and why. Held calls are approved from that text.
+- **Steer a running worker** with `djy_session_steer`: the correction arrives at its next model step instead of waiting for the turn to end. `djy_approval_decide` takes an optional `note` that is steered to the worker along with the decision.
+- **Workers do not hang on questions.** A worker that asks the user something ends its task as `needs_input`; nothing is chosen on its behalf. List them with `djy_questions_list` and answer in a follow-up task on the same session.
+- **Restarts.** After a desktop restart, idle sessions resume with their route and permission preset. Tasks cut by the restart end as `interrupted` (not `done`): inspect the workspace and resubmit what is left. The event stream carries an `epoch`; after a restart `djy_events_watch` returns `reset: true`, so watchers drop their old cursor.
 
-| 页签 | 内容 |
+## Desktop panel
+
+After installation the desktop sidebar gets a **Dujiangyan** entry with five tabs and a health banner:
+
+| Tab | Contents |
 |---|---|
-| **概览** | 会话数（按创建者统计）、运行中的任务、待审批数、独占锁；各渠道的并发、排队和熔断状态；最近的事件 |
-| **会话与任务** | 按**批次**分组（一个客户端的一次运行算一批，也可以自己命名）；每个会话的创建者、模型链、任务、结果摘要和遗留问题；一键打开会话、取消任务 |
-| **闸门记录** | 每一次拒绝、转审的工具调用及原因，可以按类型筛选 |
-| **待审批** | 等待决定的调用，直接点“批准”或“拒绝”，可以附上理由 |
-| **渠道与探测** | 渠道健康、被停用的路由、每次探测的结果、路由切换、各模型的用量和缓存命中率 |
+| **Overview** | Sessions (by creator), running tasks, pending approvals, leases; per-provider concurrency, queue and breaker state; recent events |
+| **Sessions & tasks** | Grouped by **batch** (one client run per batch, or a name you choose); each session's creator, model chain, tasks, result summaries and open issues; open a session or cancel a task in one click |
+| **Gate log** | Every denied or escalated tool call and why, filterable |
+| **Approvals** | Held calls with their context (task, the worker's explanation, earlier calls) and AI opinions: Allow or Deny, optionally with a reason, or "Open session" to read the transcript |
+| **Routes & probes** | Provider health, benched routes, probe results, route switches, usage and cache-hit rate per model |
 
 <table>
 <tr>
-<td width="50%"><img src="./assets/screenshots/sessions.zh.png" alt="会话与任务"><br><sub>会话与任务：按批次分组，看得到每个会话走的模型链</sub></td>
-<td width="50%"><img src="./assets/screenshots/archive.zh.png" alt="按批次归档"><br><sub>按批次归档：先弹窗确认，运行中的不能归档，随时可以恢复</sub></td>
+<td width="50%"><img src="./assets/screenshots/sessions.en.png" alt="Sessions and tasks"><br><sub>Sessions & tasks: grouped by batch, with each session's model chain</sub></td>
+<td width="50%"><img src="./assets/screenshots/archive.en.png" alt="Archive a batch"><br><sub>Archive by batch: confirmed in a dialog, busy sessions excluded, always restorable</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="./assets/screenshots/gate.zh.png" alt="闸门记录"><br><sub>闸门记录：拦下了什么、为什么</sub></td>
-<td width="50%"><img src="./assets/screenshots/routes.zh.png" alt="渠道与探测"><br><sub>渠道与探测：熔断、停用的路由、用量和缓存命中率</sub></td>
+<td width="50%"><img src="./assets/screenshots/gate.en.png" alt="Gate log"><br><sub>Gate log: what was stopped and why</sub></td>
+<td width="50%"><img src="./assets/screenshots/routes.en.png" alt="Routes and probes"><br><sub>Routes & probes: breakers, benched routes, usage and cache hits</sub></td>
 </tr>
 </table>
 
-- **归档**：每个批次有“归档本批…”，另有单独的“全部归档…”按钮（默认一个都不勾选）。归档使用桌面版自带的归档功能，侧边栏同步变化，随时可以恢复。
-- 在侧边栏手动归档的会话，面板会同步标记为“已归档”，只提供“恢复”按钮，也不再接受新任务。
-- 面板通过桌面版自己的登录态访问插件接口，不需要令牌，其他程序无法冒用。
+- **Health banner and notifications**: watchdog alerts (aging approvals, stalled tasks, failing AI judges, absent orchestrator) show at the top of the panel, and each alert raises one desktop notification.
+- **Archiving**: each batch has "Archive batch…", and a separate "Archive all…" button preselects nothing. It uses the desktop's own archive, so the sidebar stays in sync and everything can be restored.
+- Sessions you archive in the sidebar are marked "archived" in the panel, offer only Restore, and accept no new tasks.
+- The panel talks to the plugin through the desktop's own login session; no token is involved and other programs cannot impersonate it.
 
-> 截图由真实的面板组件渲染，填入的是演示数据。
+> Screenshots are rendered from the real panel component with demo data.
 
-## 平台与客户端支持
+## Platforms and clients
 
-插件是纯 JavaScript，运行在 DeepSeek Harness 自带的 Node 运行时里，**不需要另外安装任何东西**，也没有原生扩展。
+The plugin is plain JavaScript running in DeepSeek Harness's bundled Node runtime. **Nothing else to install**, no native modules.
 
-| 平台 | 状态 |
+| Platform | Status |
 |---|---|
-| Windows 10 / 11 | ✅ 已在真实桌面版上完整验收：闸门三档、审批、bench 锁、审计、面板；多会话跨多家渠道并发；429 识别、与 Harness 自带重试的配合、熔断后切换备用模型 |
-| Linux | 🟡 平台相关逻辑（路径、bash 命令规则）有单元测试，CI 在 Linux 上运行；真实桌面版冒烟测试待完成 |
-| macOS | 🟡 同 Linux |
+| Windows 10 / 11 | ✅ Fully accepted on the real desktop app: all three gate tiers, approvals, bench lease, audit, panel; concurrent sessions across several providers; 429 classification, interplay with Harness's own retries, breaker failover |
+| Linux | 🟡 Platform logic (paths, bash command rules) is unit-tested and CI runs on Linux; a real-desktop smoke test is pending |
+| macOS | 🟡 Same as Linux |
 
-| 客户端 | 状态 |
+| Client | Status |
 |---|---|
-| Claude Code（CLI） | ✅ 已验证：派活、进度、审批全流程 |
-| Codex CLI | ✅ 已验证：创建会话、派发任务、查看进度、回收结果 |
-| Kimi Code | ✅ 已验证接入 |
-| Codex 桌面版 | 🟡 与 CLI 共用 `~/.codex/config.toml`，尚未实测 |
-| 其他 MCP 客户端 | 支持“HTTP 方式的 MCP 服务器 + 自定义请求头”即可，见 [docs/CONNECT.md](docs/CONNECT.md) |
+| Claude Code (CLI) | ✅ Verified: dispatch, progress and approvals end to end |
+| Codex CLI | ✅ Verified: session creation, task dispatch, progress and results |
+| Kimi Code | ✅ Connection verified |
+| Codex desktop app | 🟡 Shares `~/.codex/config.toml` with the CLI; not tested yet |
+| Other MCP clients | Need "HTTP MCP server + custom headers"; see [docs/CONNECT.md](docs/CONNECT.md) |
 
-## 配置参考
+## Configuration
 
-都写在 `cordis.patch.yml` 里 `dujiangyan-dispatch` 条目的 `config` 下，除 `workspaceRoots` 外全部可选。
+There are two places:
 
-| 字段 | 默认值 | 说明 |
+- **The profile** (`config` of the `dujiangyan-dispatch` row in `cordis.patch.yml`): the stable base. Changes need a desktop restart. Everything except `workspaceRoots` is optional.
+- **`~/.dsh/dujiangyan/local-rules.json`**: your personal, hot-reloaded layer (see below).
+
+| Field | Default | Meaning |
 |---|---|---|
-| `workspaceRoots` | `[]` | **必填。** agent 可以写入的目录 |
-| `host` / `port` | `127.0.0.1` / `8790` | MCP 服务的监听地址 |
-| `stateDir` | `~/.dsh/dujiangyan` | 令牌、审计日志、任务和锁文件的位置 |
-| `roster` | implementer → `deepseek-official/deepseek-flash`；reviewer、planner → `deepseek-official/deepseek-v4-pro` | 每个角色的模型链 |
-| `limits.defaults` / `limits.providers.<id>` | 见[宝瓶口](#宝瓶口准入控制) | `maxConcurrent`、`rpm`、`minSpacingMs`、`jitterMs`、`increaseAfter`、`breakerThreshold`、`breakerCooldownMs` |
-| `permissionPreset` | `workspace-write` | 工人会话的权限预设 |
-| `agentPreset` | `standard` | 工人会话挂载的 agent 预设 |
-| `approvalTimeoutMs` | `900000`（15 分钟） | 等待审批的时限 |
-| `fallbackToHuman` | `true` | 审批超时后，根会话是否交给桌面版的审批弹窗 |
-| `maxSessions` | `0`（不限） | 会话数上限 |
-| `maxActiveSessions` | `0`（不限） | 同时在跑任务的会话数上限，**只用来限制本机负载**；对 API 的压力由宝瓶口控制 |
-| `preflight` | `true` | 创建会话前是否检查工作区环境 |
-| `rules.allowCommands` / `denyPatterns` / `benchPatterns` | 空 | 扩展命令规则 |
-| `rules.allowWebSearch` / `allowSubagents` | `true` / `false` | 是否允许网页搜索；是否允许 agent 自己拉起子 agent |
-| `stagger.enabled` | `false` | 实验功能：错峰启动，让后启动的 agent 命中厂商的前缀缓存 |
+| `workspaceRoots` | `[]` | **Required.** Directories agents may write to |
+| `host` / `port` | `127.0.0.1` / `8790` | MCP listen address |
+| `stateDir` | `~/.dsh/dujiangyan` | Token, audit log, tasks, lease files and `local-rules.json` |
+| `roster` | implementer → `deepseek-official/deepseek-flash`; reviewer, planner → `deepseek-official/deepseek-v4-pro` | Model chain per role |
+| `limits.defaults` / `limits.providers.<id>` | see [Bottle-Neck](#bottle-neck-admission-control) | `maxConcurrent`, `rpm`, `minSpacingMs`, `jitterMs`, `increaseAfter`, `breakerThreshold`, `breakerCooldownMs` |
+| `permissionPreset` | `workspace-write` | Permission preset for worker sessions |
+| `agentPreset` | `standard` | Agent preset mounted on worker sessions |
+| `approvalTimeoutMs` | `900000` (15 min) | How long a held call waits for a decision |
+| `fallbackToHuman` | `false` | After a timeout, hand root-session calls to the desktop's own prompt instead of denying |
+| `aiApproval` | off | `enabled`, `judges` (`[{ provider, model, effort? }]`, default: two from your roster), `timeoutMs` (30000 per judge), `maxPerSessionPer10Min` (20) |
+| `quietMode` | on | `enabled`, `patterns` (extra regexes for heavy commands), `maxWaitMs` (30 min) |
+| `denyBreaker` | on | `enabled`, `consecutiveDenies` (3), `windowDenies` (6), `windowSize` (10) |
+| `watchdog` | see [above](#nothing-waits-silently) | `intervalMs`, `steerAfterMs`, `warnAfterMs`, `stallAfterMs`, `orchestratorAbsentMs` |
+| `maxSessions` | `0` (unlimited) | Session cap |
+| `maxActiveSessions` | `0` (unlimited) | Cap on sessions running tasks at once, **for local machine load only**; API pressure is handled by the Bottle-Neck |
+| `preflight` | `true` | Check the workspace environment before creating a session |
+| `rules.allowCommands` / `denyPatterns` / `benchPatterns` | empty | Extend the command rules |
+| `rules.allowWebSearch` / `allowSubagents` | `true` / `false` | Allow web search; allow agents to spawn their own sub-agents |
+| `stagger.enabled` | `false` | Experimental: staggered start so later agents hit the provider's prefix cache |
 
-## MCP 工具
+Example: turn on AI approval with two judges from different vendors (fastest first).
 
-| 工具 | 作用 |
+```yaml
+- id: dujiangyan-dispatch
+  name: dsh-dujiangyan-dispatch
+  config:
+    workspaceRoots:
+      - '/home/me/my-project'
+    aiApproval:
+      enabled: true
+      judges:
+        - { provider: vendor-a, model: fast-model }
+        - { provider: vendor-b, model: other-model }
+```
+
+### Personal rules: `local-rules.json`
+
+The profile is the shared base; this file holds what you learn while running your own projects. It is re-read on save, with no restart. An invalid file never reaches the gate: the last good version stays in force and the error is reported (`djy_rules_get`, events). Layers only **add** to the base rules; they never remove one.
+
+```json
+{
+  "rules": {
+    "allowCommands": ["mytool"],
+    "denyPatterns": ["\\bdrop\\s+database\\b"],
+    "benchPatterns": ["run_bench\\.sh"]
+  },
+  "hints": [
+    { "match": "\\bcurl\\b", "tool": "bash", "reason": "No network here: list the URL in leftovers and it will be fetched for you." }
+  ],
+  "facts": ["The test data lives in ./fixtures; do not regenerate it."],
+  "workspaces": {
+    "/home/me/my-project": { "facts": ["Build with `make -j8`."] }
+  },
+  "aiApproval": { "enabled": true },
+  "quietMode": { "patterns": ["\\bmake\\b"] }
+}
+```
+
+| Key | Meaning |
 |---|---|
-| `djy_guide` | **建议先读**：使用流程、审批原则、已知问题及规避方法 |
-| `djy_status` | 总览：会话、任务、待审批、锁、各渠道的并发和熔断、用量和缓存命中率 |
-| `djy_models` | 列出可以路由到的 provider 和模型 |
-| `djy_routes_probe` | 用极小的真实请求检查模型是否能用；结果写进事件流和审计日志 |
-| `djy_limits_set` | 运行时调整某个 provider 的准入参数（不写盘） |
-| `djy_preflight` | 只读检查工作区环境，并给出修复建议 |
-| `djy_session_create` / `_list` / `_close` | 创建、列出、关闭工人会话；创建时可以指定角色、模型链、批次名 |
-| `djy_task_submit` / `_get` / `_list` / `_cancel` | 提交、查看、取消任务；可以声明独占资源，例如 `["bench"]` |
-| `djy_events_watch` | 按游标长轮询事件流 |
-| `djy_approvals_list` / `djy_approval_decide` | 查看待审批请求、做出决定（先到先得） |
-| `djy_locks_list` | 查看锁和排队情况 |
+| `rules` | Extra `allowCommands`, `denyPatterns`, `benchPatterns` |
+| `hints` | Turn a call that would wait for approval into a deny with the right advice (`match` is a case-insensitive regex; `tool` optional). A hint never allows anything |
+| `facts` | Extra lines for the environment-facts block of task prompts (and for the AI judges) |
+| `workspaces` | `rules`, `hints` and `facts` that apply only inside one workspace root |
+| `aiApproval` | Overrides of the profile setting (top level only) |
+| `quietMode` | Overrides of the profile setting; patterns are added to the profile ones |
 
-## 安全
+The file lives outside every workspace, and the gate denies worker writes to it, so workers cannot loosen their own rules.
 
-- 只监听 `127.0.0.1`；拒绝非本机连接，以及 Host 头不是本机地址的请求（防 DNS 重绑定）。
-- 拒绝所有带 `Origin` 头的请求，网页无法发起 CSRF。
-- 必须携带 Bearer 令牌，服务端用常量时间比较；POST 必须是 `application/json`。
-- 交给审批人的参数摘要会屏蔽疑似密钥的字段。
-- 插件不向任何外部服务发送数据；所有决定写进本机的审计日志 `~/.dsh/dujiangyan/audit/`。
+## MCP tools
 
-## 排错
+23 tools:
 
-| 现象 | 处理 |
+| Tool | Purpose |
 |---|---|
-| `djy_session_create` 报预检问题（Windows） | 列出的目录缺少沙箱需要的 Low 完整性标签。确认后执行它给出的 `icacls` 命令（只作用于这些目录），或传 `ignorePreflight` 跳过 |
-| 连接被拒（401/403） | 令牌不对，或请求带了 `Origin` 头；按[第 3 步](#3-让你的-ai-客户端接上)重新接入 |
-| 端口 8790 没有监听 | 确认桌面版已启动、`workspaceRoots` 已配置；看 `~/.dsh/dujiangyan/endpoint.json` |
-| 大量 429 | 调低 `limits.providers.<id>.maxConcurrent`，并给对应角色配置备用模型 |
+| `djy_guide` | **Read first**: workflow, approval principles, known pitfalls and workarounds |
+| `djy_status` | Sessions, tasks, approvals, AI approval, leases, per-provider concurrency and breaker, usage and cache-hit rate, and the watchdog `health` block |
+| `djy_models` | Providers and models that can be routed to |
+| `djy_routes_probe` | Check models with a tiny real request; results go to the event stream and audit log |
+| `djy_limits_set` | Adjust a provider's admission limits at run time (in memory) |
+| `djy_preflight` | Read-only workspace environment check with suggested fixes and the environment facts |
+| `djy_session_create` / `_list` / `_close` | Create, list, close worker sessions; role or route chain, batch name and write scope on create |
+| `djy_session_steer` | Send a short correction to a running worker, delivered at its next model step |
+| `djy_task_submit` / `_get` / `_list` / `_cancel` | Submit, inspect, cancel tasks; declare exclusive resources such as `["bench"]` |
+| `djy_questions_list` | Questions workers asked (tasks in `needs_input`) |
+| `djy_events_watch` | Long-poll the event stream by cursor and epoch |
+| `djy_approvals_list` / `djy_approval_decide` | List held calls with context and AI opinions; decide (first decision wins), optionally with a `note` for the worker |
+| `djy_ai_approval_get` / `djy_ai_approval_set` | AI approval status, judges, eligible rules and judge health; turn it on or off at run time |
+| `djy_rules_get` / `djy_rules_reload` | Show `local-rules.json` and the effective rules for a directory; reload it now |
+| `djy_locks_list` | Leases and their queues |
 
-更多真实踩过的坑见 [LESSONS.md](LESSONS.md)。
+## Security
 
-## 路线图
+- Listens on `127.0.0.1` only; refuses non-loopback peers and non-loopback Host headers (DNS-rebinding guard).
+- Refuses any request with an `Origin` header, so web pages cannot mount CSRF.
+- Requires a bearer token compared in constant time; POST must be `application/json`.
+- Argument summaries and approval context shown to approvers mask likely secrets.
+- AI judges see the worker's text only inside a data fence with a random marker; network, outward and out-of-workspace calls never reach them.
+- Workers cannot write the plugin data directory, so they cannot change `local-rules.json` or the token.
+- The plugin itself sends nothing to external services. The only model calls it makes are AI judgments (if enabled) and route probes, both to providers you configured. Every decision goes to the local audit log in `~/.dsh/dujiangyan/audit/`.
 
-- [x] 闸门三档 + AI 审批 + 人工兜底
-- [x] 按 key 准入、熔断切换、路由探测
-- [x] 桌面面板、按批次归档
-- [x] 任意 MCP 客户端由 agent 自助接入
-- [ ] 发布到 npm，桌面版“添加插件”一键安装
-- [ ] Linux / macOS 真实桌面版冒烟测试
-- [ ] stdio → HTTP 小桥，支持只会 stdio 的客户端
-- [ ] **都江堰·天府**：任务依赖图、自动审核与返工的团队调度
+## Troubleshooting
 
-## 从源码构建
+| Symptom | What to do |
+|---|---|
+| `djy_session_create` reports preflight issues (Windows) | The listed directories lack the Low integrity label the sandbox needs. Review and run the suggested `icacls` command (it touches only those directories), or pass `ignorePreflight` |
+| Connection refused with 401/403 | Wrong token or an `Origin` header; reconnect as in [step 3](#3-connect-your-ai-client) |
+| Nothing listening on 8790 | Make sure the desktop app is running and `workspaceRoots` is set; check `~/.dsh/dujiangyan/endpoint.json` |
+| Many 429s | Lower `limits.providers.<id>.maxConcurrent` and give the role a fallback model |
+| Approvals time out | Check the `health` block of `djy_status`: is an orchestrator connected and watching events? Decide in the panel, or enable AI approval for workspace-confined calls |
+| "AI judge is failing" alert | Run `djy_ai_approval_get` to see the error; fix the route or set other `judges`. Until then every held call needs a human |
+| Changes to `local-rules.json` do nothing | Run `djy_rules_reload` or `djy_rules_get`: an invalid file is rejected and the last good version stays in force |
+
+More real-world pitfalls: [LESSONS.md](LESSONS.md) (Chinese).
+
+## Roadmap
+
+- [x] Three-tier gate + human approval with full context
+- [x] AI dual-judge approval, watchdog, quiet mode, hot-reloaded personal rules
+- [x] Per-key admission, breaker failover, route probes
+- [x] Desktop panel, archive by batch
+- [x] Self-service connection for any MCP client
+- [ ] Publish to npm for one-click install in the desktop app
+- [ ] Real-desktop smoke tests on Linux and macOS
+- [ ] stdio → HTTP bridge for stdio-only clients
+- [ ] **Dujiangyan · Tianfu**: team scheduling with task DAGs, automatic review and rework
+
+## Build from source
 
 ```bash
 git clone https://github.com/klinkdev2026/dsh-dujiangyan-dispatch.git
 cd dsh-dujiangyan-dispatch
 npm install
-npm test          # 单元测试 + 模拟宿主的端到端测试
-npm run compile     # 输出到 lib/
-# 退出桌面版后，用 link: 方式安装本地源码（dsh 用桌面版自带的那个）
+npm test          # unit tests + end-to-end tests against a fake host
+npm run compile     # writes lib/
+# quit the desktop app, then install the checkout with link: (use the desktop's bundled dsh)
 dsh plugin --profile desktop add "link:$(pwd)"
 ```
 
-修改代码后重新 `npm run compile`，再重启桌面版生效。欢迎提 issue 和 PR。
+After changing code, run `npm run compile` again and restart the desktop app. Issues and PRs are welcome.
 
-## 致谢
+## Acknowledgements
 
-- 整体思路参考 [dsh-harness-mcp-server](https://github.com/chushixixin/dsh-harness-mcp-server)（MIT），代码为独立重写。
-- 设计借鉴 [dsh-agent-teams](https://github.com/NanmiCoder/dsh-agent-teams)、[dsh-agent-swarm](https://github.com/TT-Wang/dsh-agent-swarm)、[dsh-swarm](https://github.com/joekytc/dsh-swarm) 以及 DeepSeek Harness 官方的 auto-review 插件，详见 [NOTICE.md](NOTICE.md)。
+- The overall shape follows [dsh-harness-mcp-server](https://github.com/chushixixin/dsh-harness-mcp-server) (MIT); the code is an independent rewrite.
+- Design ideas from [dsh-agent-teams](https://github.com/NanmiCoder/dsh-agent-teams), [dsh-agent-swarm](https://github.com/TT-Wang/dsh-agent-swarm), [dsh-swarm](https://github.com/joekytc/dsh-swarm) and DeepSeek Harness's official auto-review plugin. See [NOTICE.md](NOTICE.md).
 
-本项目是社区插件，与 DeepSeek 官方无隶属关系。
+This is a community plugin, not affiliated with DeepSeek.
 
-<p align="center">MIT License · 如果它帮到了你，点个 ⭐ 让更多人看到</p>
+<p align="center">MIT License · If it helps you, a ⭐ helps others find it</p>

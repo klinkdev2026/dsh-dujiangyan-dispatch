@@ -95,6 +95,22 @@ test('leases: exclusive, re-entrant, stale takeover, epoch increments', async ()
   }
 })
 
+test('leases: a holder whose lease was taken over is told on the next heartbeat (review M3)', async () => {
+  const dir = tmp()
+  try {
+    const a = new LeaseManager(dir, 3000) // heartbeat every 1 s
+    const lost: unknown[] = []
+    a.onLost = (name, holder, now) => lost.push({ name, holder, nowHeldBy: now?.holder })
+    const r1 = a.tryAcquire('bench', 'task-1')
+    assert.ok(r1)
+    writeFileSync(path.join(dir, 'bench.lock'), JSON.stringify({ ...r1, holder: 'other', epoch: 2 }))
+    await new Promise(resolve => setTimeout(resolve, 1300))
+    assert.deepEqual(lost, [{ name: 'bench', holder: 'task-1', nowHeldBy: 'other' }])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('store: atomic JSON and torn JSONL lines', () => {
   const dir = tmp()
   try {
@@ -107,5 +123,26 @@ test('store: atomic JSON and torn JSONL lines', () => {
     assert.deepEqual(readJsonl(j), [{ a: 1 }, { a: 2 }])
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('secret argument names are matched as whole words (review: monkey/keyboard)', async () => {
+  const { isSecretKey } = await import('../src/approvals.ts')
+  for (const k of ['api_key', 'apiKey', 'X-Auth-Token', 'password', 'secret', 'accessToken', 'authorization']) assert.equal(isSecretKey(k), true, k)
+  for (const k of ['monkey', 'keyboard', 'max_tokens', 'tokenizer', 'description', 'command']) assert.equal(isSecretKey(k), false, k)
+})
+
+test('events: wait returns at once on an already-aborted signal', async () => {
+  const log = new EventLog(undefined)
+  const t0 = Date.now()
+  await log.wait(0, 5000, AbortSignal.abort())
+  assert.ok(Date.now() - t0 < 500)
+})
+
+test('approval summaries never split a surrogate pair (review L5)', async () => {
+  const { summarizeForApproval } = await import('../src/approvals.ts')
+  for (let max = 10; max < 20; max++) {
+    const { summary } = summarizeForApproval({ command: '😀'.repeat(20) }, max)
+    assert.equal(summary.isWellFormed(), true, `max ${max}`)
   }
 })

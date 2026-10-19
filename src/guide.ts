@@ -5,7 +5,13 @@
 export const ORCHESTRATOR_GUIDE = {
   workflow: [
     'djy_status → djy_models → djy_routes_probe (which listed models really work) → djy_preflight(cwd) → djy_session_create(role or route) → djy_task_submit → djy_events_watch(cursor) loop → djy_task_get.',
-    'Keep the cursor from djy_events_watch and pass it back; react to approval/pending events with djy_approval_decide.',
+    'Keep the cursor and epoch from djy_events_watch and pass both back; react to approval/pending events with djy_approval_decide. reset:true means the plugin restarted: drop the old cursor and re-check djy_task_list.',
+    'A task in status "interrupted" did not finish (desktop restart or an outside abort): inspect the workspace for partial work and resubmit what is left on the same session.',
+    'A task in status "needs_input" ended because the worker asked the user something (djy_questions_list): nobody answers inside the worker session and nothing was chosen for it. Decide (or ask your user), then submit a follow-up task carrying the answer.',
+    'A task in status "needs_attention" was paused by the deny circuit breaker (3 gate/AI denials in a row or 6 of the last 10 calls): the worker kept trying refused actions. Read its tool calls, then submit a corrected task. Denials a worker receives start with "[dujiangyan-denied:<rule>]".',
+    'Give each worker its own write scope: create the session with cwd = its project subfolder (that becomes its writeScope) or pass writeScope explicitly. Two workers writing the same files corrupt each other\'s work (write-outside-scope denies the rest).',
+    'To correct a running worker without waiting for its turn to end, use djy_session_steer; to say something along with an approval, pass note to djy_approval_decide (steered into the worker\'s next step).',
+    'Personal rules live in local-rules.json in the plugin data dir (djy_rules_get shows the path and the effective rules; it reloads on save, djy_rules_reload forces it). Use "hints" for escalations you keep answering the same way: the call is denied with your advice instead of waiting for you. Hints never allow anything.',
     'Submit benchmark/measurement steps as separate tasks with resources ["bench"]; everything else runs without it.',
     'Sessions are long-lived workers: reuse them across tasks (check djy_session_list first). Do not close a session after each task — closing throws away its context and the user loses the session they were watching. Close only when asked, when that role\'s work is over, or to stay under maxSessions.',
   ],
@@ -14,6 +20,8 @@ export const ORCHESTRATOR_GUIDE = {
     'Allow only the exact call; deny variants. Record the undo for anything you allow that changes state.',
     'Irreversible or outward-facing actions (push, uploads, installs outside the workspace, deleting data) go to the human, not to you.',
     'Deny with a reason the worker can act on ("use the venv", "submit as a bench task").',
+    'AI approval (djy_ai_approval_get / djy_ai_approval_set): when on, workspace-confined escalations go to model judges first, asked in order (fastest first); only a unanimous answer decides and the panel stops at the first "human", error or disagreement. A pending item with ai.status "split" is yours: read the opinions, then decide. Network/outward calls, anything outside the roots, encoded commands, loader-environment changes and truncated calls never reach the judges; each session has an AI budget (maxPerSessionPer10Min).',
+    'Quiet mode: while a task holds "bench", builds and tests from other sessions wait (events quiet/waiting, quiet/resumed) so measurements stay clean; after quietMode.maxWaitMs they escalate as quiet-timeout.',
   ],
   pitfalls: [
     {
@@ -45,6 +53,11 @@ export const ORCHESTRATOR_GUIDE = {
       symptom: 'Rate limits (429) from a gateway key with several workers',
       cause: 'Gateway keys often allow only 3–5 concurrent requests.',
       avoid: 'Set limits.providers.<provider>.maxConcurrent to the key\'s real limit; give roles a fallback route on another provider.',
+    },
+    {
+      symptom: 'The first task after a desktop restart fails at once: prompt variable "{{model}}" has no value for this assembly',
+      cause: 'The host had not finished assembling its prompt sections when the turn started; nothing ran.',
+      avoid: 'The plugin retries such startup failures twice with a short backoff (task/retry events). If it still fails, resubmit the task.',
     },
     {
       symptom: 'Benchmark numbers are noisy or inconsistent',
