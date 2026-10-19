@@ -1,6 +1,11 @@
 <p align="right"><a href="./README.md">English</a> · <strong>简体中文</strong></p>
 
 <p align="center">
+  <img src="./assets/flood.zh.webp" width="100%" alt="动图：都江堰洪水从 1000 涨到 5500 m³/s，鱼嘴、飞沙堰、宝瓶口让灌区不被淹，分别对应模型路由、权限闸门与 AI 拦截、按 key 准入">
+  <br><sub>一场洪水，1000 → 5500 m³/s：三大工程如何让田不被淹，以及它们在插件里对应什么。流量数据来自《四川都江堰灌区工程手册》(1993)。</sub>
+</p>
+
+<p align="center">
   <img src="./assets/hero.zh.png" width="100%" alt="都江堰：用任意 AI 客户端，通过一道闸门，指挥任意数量、任意模型的 DeepSeek Harness agent">
 </p>
 

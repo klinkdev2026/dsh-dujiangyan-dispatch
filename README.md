@@ -1,6 +1,11 @@
 <p align="right"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
 
 <p align="center">
+  <img src="./assets/flood.en.webp" width="100%" alt="Animation: a flood at Dujiangyan rises from 1000 to 5500 m³/s; the Fish Mouth, the Flying Sand Weir and the Bottle-Neck keep the fields dry, mapped to model routing, the permission gate with AI interception, and per-key admission">
+  <br><sub>A flood at Dujiangyan, 1000 → 5500 m³/s: how each work keeps the fields dry, and what it is in the plugin. Flows from the <i>Sichuan Dujiangyan Irrigation District Engineering Handbook</i> (1993).</sub>
+</p>
+
+<p align="center">
   <img src="./assets/hero.en.png" width="100%" alt="Dujiangyan: command any number of mixed-model DeepSeek Harness agents from any AI client, through one gate">
 </p>
 

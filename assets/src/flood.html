@@ -1,0 +1,660 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:#06121a;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#e8f1f6}
+canvas{position:absolute;left:0;top:0}
+.mono{font-family:"Cascadia Mono",Consolas,monospace}
+#ov{position:absolute;inset:0;pointer-events:none}
+.topfade{position:absolute;left:0;right:0;top:0;height:150px;background:linear-gradient(180deg,#06121af2 0%,#06121ab0 55%,#06121a00 100%)}
+.botfade{position:absolute;left:0;right:0;bottom:0;height:170px;background:linear-gradient(0deg,#06121a 0%,#06121af0 62%,#06121a00 100%)}
+h1{position:absolute;left:40px;top:22px;margin:0;font-size:40px;font-weight:800;letter-spacing:1px;text-shadow:0 2px 12px #000a}
+h1 small{font-size:22px;font-weight:600;color:#7fc8d8;margin-left:14px;letter-spacing:.5px}
+.tag{position:absolute;left:40px;top:76px;font-size:16px;color:#b9d0db;text-shadow:0 1px 6px #000}
+.data{position:absolute;right:20px;top:14px;width:330px;border-radius:12px;background:#07141cdd;border:1px solid #24485a;padding:10px 14px 8px}
+.data .big{display:flex;align-items:baseline;gap:8px}
+.data .big b{font-size:28px;font-weight:800;font-family:"Cascadia Mono",Consolas,monospace;letter-spacing:-.5px}
+.data .row{display:grid;grid-template-columns:62px 1fr 92px;align-items:center;gap:8px;font-size:13px;margin-top:5px}
+.data .bar{height:8px;border-radius:4px;background:#132a35;overflow:hidden}
+.data .bar i{display:block;height:100%;border-radius:4px}
+.data .num{font-family:"Cascadia Mono",Consolas,monospace;text-align:right;font-size:13px}
+.src{position:absolute;left:40px;right:40px;bottom:4px;font-size:10.5px;color:#6f93a6;text-align:center;white-space:nowrap;overflow:hidden}
+.lbl{position:absolute;transform:translate(-50%,-100%);white-space:nowrap;font-weight:700;font-size:16px;text-shadow:0 0 4px #000,0 0 10px #000,0 1px 2px #000}
+.lbl small{display:block;font-size:12px;font-weight:500;color:#cfe3ea;text-align:center}
+.lbl:after{content:"";position:absolute;left:50%;top:100%;width:1px;height:14px;background:linear-gradient(#fff9,#fff0)}
+.pct{font-family:"Cascadia Mono",Consolas,monospace;font-size:18px;font-weight:800;margin-left:6px}
+.chip{position:absolute;transform:translate(-50%,-130%);padding:4px 10px 4px 8px;border-radius:9px;background:#07141bee;border:2px solid;font-size:14px;white-space:nowrap;box-shadow:0 4px 14px #0008}
+.chip b{margin-right:6px}
+.badge{display:inline-flex;width:22px;height:22px;border-radius:50%;align-items:center;justify-content:center;color:#06121a;font-weight:800;font-size:13px;margin-right:6px;vertical-align:1px}
+.panel{position:absolute;border-radius:12px;background:#08161ef0;border:1.5px solid;padding:10px 14px;box-shadow:0 8px 24px #000a}
+.steps{display:flex;gap:6px;align-items:center;margin-top:8px}
+.steps span{padding:4px 10px;border-radius:7px;background:#11242e;border:1.5px solid #2c4a58;font-size:14px;font-weight:650}
+.steps i{color:#6f93a6;font-style:normal}
+.phase{position:absolute;left:40px;top:560px;display:flex;align-items:center;gap:12px;font-size:16px;text-shadow:0 1px 6px #000}
+.phase b{padding:4px 14px;border-radius:14px;border:1px solid;font-size:15px}
+.cards{position:absolute;left:40px;right:40px;top:598px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.card{height:98px;border-radius:12px;background:#0b1a22;border:1.5px solid #1f3d4a;padding:12px 14px;transition:none}
+.card h4{margin:0;font-size:16px;font-weight:700}
+.card p{margin:8px 0 0;font-size:13.5px;color:#a9c4d1;line-height:1.5}
+.meter{position:absolute;padding:8px 12px;border-radius:10px;background:#08161ef0;border:1.5px solid #25505a;font-size:14px;display:flex;align-items:center;gap:8px;white-space:nowrap}
+.meter .slot{width:11px;height:16px;border-radius:2px;background:#4ade80}
+</style></head><body>
+<div id="ov"></div>
+<script type="module">
+import * as THREE from '../../node_modules/three/build/three.module.js'
+
+const q = new URLSearchParams(location.search)
+const lang = q.get('lang') || 'zh'
+const T = 18
+const W = 1280, H = 720
+
+// ================= hydrology timeline =================
+const smooth = x => x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x)
+// 都江堰渠首工程泄洪流量表 (m³/s), from《四川都江堰灌区工程手册》(1993), as quoted by
+// 王芳芳、吴时强《都江堰工程的思考与启示》(南京水利科学研究院). Weir flow includes the 平水槽 and 人字堤 overflow.
+//            岷江   内江   外江  宝瓶口 飞沙堰
+const TABLE = [[1000,  550,  450, 420,  130],
+               [2000, 1020,  980, 520,  500],
+               [4000, 1800, 2200, 640, 1160],
+               [5500, 2300, 3200, 700, 1600]]
+const Q0 = 1000, QPEAK = 5500 // 5500 ≈ the largest flood measured at 紫坪铺: 5480 m³/s on 1964-07-22
+/** Min River discharge over the loop: a flood hydrograph 1000 -> 5500 -> 1000 */
+const riverQ = t => t < 2 ? Q0 : t < 5.5 ? Q0 + (QPEAK - Q0) * smooth((t - 2) / 3.5) : t < 13 ? QPEAK : t < 16.5 ? QPEAK - (QPEAK - Q0) * smooth((t - 13) / 3.5) : Q0
+/** split of a Min River discharge, linearly interpolated between the table rows */
+function split(Q) {
+  let i = 0; while (i < TABLE.length - 2 && Q > TABLE[i + 1][0]) i++
+  const a = TABLE[i], b = TABLE[i + 1], k = Math.max(0, Math.min(1, (Q - a[0]) / (b[0] - a[0])))
+  const v = a.map((x, j) => x + (b[j] - x) * k)
+  return { Q: v[0], inner: v[1], outer: v[2], neck: v[3], weir: v[4] }
+}
+/** 0..1 flood factor, used only for colour (sediment load) */
+const floodAt = t => (riverQ(t) - Q0) / (QPEAK - Q0)
+const PH = { rise: [2, 4.5], fish: [4.5, 7.5], weir: [7.5, 10.5], neck: [10.5, 13.5], end: [13.5, 18] }
+
+// ================= geometry (map units from the 2D draft; flow left -> right) =================
+const cub = (a, b, c, d, t) => { const u = 1 - t; return [u*u*u*a[0]+3*u*u*t*b[0]+3*u*t*t*c[0]+t*t*t*d[0], u*u*u*a[1]+3*u*u*t*b[1]+3*u*t*t*c[1]+t*t*t*d[1]] }
+const toW = ([X, Y]) => [(X - 640) / 4, (Y - 330) / 4]
+function sampleSegs(segs, step = 0.8) {
+  const raw = []
+  segs.forEach((s, i) => { for (let k = i ? 1 : 0; k <= 200; k++) raw.push(toW(cub(...s, k / 200))) })
+  const out = [raw[0]]; let acc = 0
+  for (let i = 1; i < raw.length; i++) { acc += Math.hypot(raw[i][0]-raw[i-1][0], raw[i][1]-raw[i-1][1]); if (acc >= step) { out.push(raw[i]); acc = 0 } }
+  if (out.at(-1) !== raw.at(-1)) out.push(raw.at(-1))
+  return out
+}
+const lineSeg = (a, b) => [[a, [a[0]+(b[0]-a[0])/3, a[1]+(b[1]-a[1])/3], [a[0]+2*(b[0]-a[0])/3, a[1]+2*(b[1]-a[1])/3], b]]
+const INNER_BED = -1.2
+const RIV = {
+  main:  { segs: [[[-120, 352], [80, 350], [200, 352], [300, 354]]], bed: -0.6, hw: 13, bank: 7 },
+  inner: { segs: [[[292, 352], [342, 330], [380, 262], [480, 254]], [[480, 254], [600, 242], [760, 246], [872, 238]]], bed: INNER_BED, hw: 5.5, bank: 4 },
+  neck:  { segs: lineSeg([866, 238], [956, 230]), bed: 0.0, hw: 2.4, bank: 1.2 },
+  outer: { segs: [[[292, 358], [350, 388], [420, 410], [520, 400]], [[520, 400], [620, 392], [740, 376], [860, 414]], [[860, 414], [980, 462], [1120, 540], [1400, 610]]], bed: -0.6, hw: 10, bank: 7 },
+  c1: { segs: [[[950, 230], [1010, 222], [1080, 180], [1400, 110]]], bed: 0.4, hw: 1.1, bank: 1 },
+  c2: { segs: [[[950, 231], [1020, 232], [1110, 214], [1400, 196]]], bed: 0.4, hw: 1.1, bank: 1 },
+  c3: { segs: [[[950, 232], [1010, 246], [1120, 262], [1400, 270]]], bed: 0.4, hw: 1.1, bank: 1 },
+  c4: { segs: [[[950, 234], [990, 270], [1060, 300], [1200, 340]]], bed: 0.4, hw: 1.0, bank: 1 },
+}
+for (const r of Object.values(RIV)) {
+  r.pts = sampleSegs(r.segs)
+  r.cum = [0]; for (let i = 1; i < r.pts.length; i++) r.cum.push(r.cum[i-1] + Math.hypot(r.pts[i][0]-r.pts[i-1][0], r.pts[i][1]-r.pts[i-1][1]))
+  r.len = r.cum.at(-1)
+}
+const WEIR = [toW([612, 0])[0], toW([724, 0])[0]]
+const NECK_X = toW([900, 0])[0]
+const PLAIN_X = toW([950, 0])[0]
+const TIP = toW([304, 356])
+
+// ================= water levels (world y) =================
+// Heights are in metres; drawn at VS world units per metre with 1 horizontal unit ≈ 7 m: ~4x vertical exaggeration.
+const VS = 0.55
+const LAND = 7.5
+const CREST = INNER_BED + 2.1 // weir crest ≈ 2.1 m above the inner riverbed
+const WEIR_LEN = 240          // 飞沙堰 ≈ 240 m long
+/** head over a broad-crested weir: Q = 1.7·L·H^1.5 (SI)  =>  H = (Q / 1.7L)^(2/3) */
+const weirHead = Qw => Math.pow(Qw / (1.7 * WEIR_LEN), 2 / 3)
+/** wide channel, Manning: depth ∝ Q^0.6, mean velocity ∝ Q^0.4 */
+const depthRatio = (Q, Qref) => Math.pow(Q / Qref, 0.6)
+const SW = 0.55 // the weir's position along the inner channel
+function levels(t) {
+  const sp = split(riverQ(t))
+  const atWeir = CREST + weirHead(sp.weir) // the inner river is held up behind the Bottle-Neck
+  return { sp, atWeir, mainEnd: atWeir + 0.5,
+    outerD: 1.0 * depthRatio(sp.outer, 450), neckD: 1.2 * depthRatio(sp.neck, 420), canalD: 0.5 * depthRatio(sp.neck, 420) }
+}
+const OUTER_BED = s => -0.6 - 2.2 * s, NECK_BED = s => 0.0 - 0.3 * s, CANAL_BED = s => 0.4 - 0.3 * s
+let LV = null
+function level(name, s) {
+  const v = LV
+  switch (name) {
+    case 'main': return v.mainEnd + 0.5 * (1 - s)
+    case 'inner': return s < SW ? v.atWeir + 0.35 * (SW - s) / SW : v.atWeir - 0.12 * (s - SW) / (1 - SW)
+    case 'neck': return Math.min(v.atWeir - 0.12, NECK_BED(s) + v.neckD)
+    case 'outer': return v.mainEnd + (OUTER_BED(s) + v.outerD - v.mainEnd) * smooth(Math.min(1, s / 0.3))
+    default: return CANAL_BED(s) + v.canalD
+  }
+}
+const speedOf = (name, t) => {
+  const sp = split(riverQ(t))
+  const r = name === 'main' ? sp.Q / 1000 : name === 'inner' ? sp.inner / 550 : name === 'outer' ? sp.outer / 450 : sp.neck / 420
+  return 0.9 * Math.pow(r, 0.4)
+}
+
+// ================= terrain =================
+function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s) }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf)
+  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1)
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v
+}
+const fbm = (x, y) => { let s = 0, a = 0.5; for (let i = 0; i < 5; i++) { s += a * vnoise(x, y); x *= 2.03; y *= 2.03; a *= 0.5 } return s }
+function nearest(r, x, z) {
+  let best = 1e9, bi = 0
+  for (let i = 0; i < r.pts.length; i += 2) { const p = r.pts[i]; const d = (p[0]-x)**2 + (p[1]-z)**2; if (d < best) { best = d; bi = i } }
+  for (let i = Math.max(0, bi - 2); i <= Math.min(r.pts.length - 1, bi + 2); i++) { const p = r.pts[i]; const d = (p[0]-x)**2 + (p[1]-z)**2; if (d < best) { best = d; bi = i } }
+  return [Math.sqrt(best), bi]
+}
+const dist2 = (x, z, cx, cz, rx, rz) => Math.hypot((x - cx) / rx, (z - cz) / rz)
+function landHeight(x, z) {
+  let h = LAND + (fbm(x * 0.05, z * 0.05) - 0.5) * 1.6
+  // the plain east of the Bottle-Neck is lower and flat
+  if (x > PLAIN_X - 6 && z < 20) h = 2.6 + (fbm(x * 0.08, z * 0.08) - 0.5) * 0.3 + Math.max(0, (PLAIN_X - x)) * 0.8
+  // Min mountains on the far (north-west) edge
+  const mtnL = Math.max(0, 1 - dist2(x, z, -175, -40, 70, 60)) + Math.max(0, 1 - dist2(x, z, -170, 70, 60, 45))
+  h += mtnL * mtnL * 55 * (0.7 + 0.6 * fbm(x * 0.06, z * 0.06))
+  // Yulei Hill north of the Bottle-Neck
+  const yl = Math.max(0, 1 - dist2(x, z, 64, -42, 40, 30))
+  h += yl * yl * 20 * (0.75 + 0.5 * fbm(x * 0.09 + 3, z * 0.09))
+  // Lidui rock just south of the cut
+  const ld = Math.max(0, 1 - dist2(x, z, 69, -12, 6.5, 7))
+  h += ld * 9
+  // back hills behind everything
+  const back = Math.max(0, (-z - 60) / 40)
+  h += back * back * 40 * (0.6 + 0.8 * fbm(x * 0.04, z * 0.04))
+  return h
+}
+const NAMES = Object.keys(RIV)
+function terrainAt(x, z) {
+  let h = landHeight(x, z)
+  let near = null, nd = 1e9
+  for (const n of NAMES) {
+    const r = RIV[n]
+    const [d, i] = nearest(r, x, z)
+    const s = i / (r.pts.length - 1)
+    // bed slopes gently downstream
+    const bed = r.bed - (n === 'outer' ? 2.2 * s : n === 'main' ? -0.4 * (1 - s) : 0.3 * s)
+    const edge = r.hw + r.bank
+    if (d < edge + 0.01) {
+      const prof = d < r.hw ? bed + (d / r.hw) ** 2 * 0.8 : bed + 0.8 + (h - bed - 0.8) * smooth((d - r.hw) / r.bank)
+      if (prof < h) h = prof
+    }
+    if (d - r.hw < nd) { nd = d - r.hw; near = n }
+  }
+  // the island between the channels (Jingang levee): about 3 m above the weir crest
+  if (x > TIP[0] && x < NECK_X - 4) {
+    const zin = RIV.inner.pts[nearest(RIV.inner, x, z)[1]][1], zout = RIV.outer.pts[nearest(RIV.outer, x, z)[1]][1]
+    if (z > zin && z < zout) h = Math.min(h, CREST + 4.6 + (fbm(x * 0.1, z * 0.1) - 0.5) * 0.4)
+  }
+  // the Flying Sand Weir: a low section of the levee between the inner and outer channels
+  if (x > WEIR[0] && x < WEIR[1]) {
+    const [di] = nearest(RIV.inner, x, z), [dout] = nearest(RIV.outer, x, z)
+    const zin = RIV.inner.pts[nearest(RIV.inner, x, z)[1]][1]
+    if (z > zin && di < 30 && dout < 30) {
+      const k = smooth(Math.min(x - WEIR[0], WEIR[1] - x) / 3)
+      h = Math.min(h, h + (CREST - h) * k)
+    }
+  }
+  return [h, near, nd]
+}
+
+// ================= three.js scene =================
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true })
+renderer.setPixelRatio(1)
+renderer.setSize(W, H)
+renderer.shadowMap.enabled = true
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMappingExposure = 1.05
+renderer.outputColorSpace = THREE.SRGBColorSpace
+document.body.prepend(renderer.domElement)
+
+const scene = new THREE.Scene()
+const SKY = new THREE.Color('#0b2230')
+scene.background = SKY
+scene.fog = new THREE.Fog(SKY, 230, 470)
+const camera = new THREE.PerspectiveCamera(30, W / H, 1, 2000)
+
+const hemi = new THREE.HemisphereLight('#bfe6ff', '#1d2a22', 0.95)
+scene.add(hemi)
+const sun = new THREE.DirectionalLight('#fff1d6', 2.4)
+sun.position.set(-120, 160, 90)
+sun.castShadow = true
+sun.shadow.mapSize.set(2048, 2048)
+Object.assign(sun.shadow.camera, { left: -200, right: 200, top: 140, bottom: -140, near: 10, far: 500 })
+sun.shadow.bias = -0.0008
+scene.add(sun)
+
+// terrain mesh
+const TX = [-210, 230], TZ = [-130, 110], NX = 330, NZ = 190
+const tg = new THREE.PlaneGeometry(TX[1] - TX[0], TZ[1] - TZ[0], NX, NZ)
+tg.rotateX(-Math.PI / 2)
+tg.translate((TX[0] + TX[1]) / 2, 0, (TZ[0] + TZ[1]) / 2)
+const tp = tg.attributes.position
+const tcol = new Float32Array(tp.count * 3)
+const cA = new THREE.Color(), cB = new THREE.Color()
+const grass1 = new THREE.Color('#355f3a'), grass2 = new THREE.Color('#4c7a3e'), rock = new THREE.Color('#5d6a60'), rockHi = new THREE.Color('#7f8a7f')
+const sand = new THREE.Color('#7b7d74'), stone = new THREE.Color('#a7aca2'), field1 = new THREE.Color('#5f8f3f'), field2 = new THREE.Color('#7d9a45'), field3 = new THREE.Color('#47783f')
+for (let i = 0; i < tp.count; i++) {
+  const x = tp.getX(i), z = tp.getZ(i)
+  const [h, near, nd] = terrainAt(x, z)
+  tp.setY(i, h)
+  const n = fbm(x * 0.15, z * 0.15)
+  if (h < CREST + 0.5 && nd < 10 && !(x > PLAIN_X - 2 && z < 18)) cA.copy(sand).lerp(new THREE.Color('#5c5f58'), 0.5 * n)
+  else if (h > 13) cA.copy(rock).lerp(rockHi, Math.min(1, (h - 14) / 30 + n * 0.3))
+  else if (x > PLAIN_X - 2 && z < 18 && h < 4.5) {
+    const cx = Math.floor((x * 0.97 + z * 0.25) / 6), cz = Math.floor((z * 0.97 - x * 0.25) / 5)
+    const k = hash(cx, cz)
+    cA.copy(k < 0.33 ? field1 : k < 0.66 ? field2 : field3)
+    const fx = ((x * 0.97 + z * 0.25) / 6) % 1, fz = ((z * 0.97 - x * 0.25) / 5) % 1
+    if (Math.min(Math.abs(fx), Math.abs(fz)) < 0.08 || Math.max(Math.abs(fx), Math.abs(fz)) > 0.92) cA.multiplyScalar(0.7)
+  } else cA.copy(grass1).lerp(grass2, n)
+  // masonry banks along the channels (Jingang levee), and the stone Fish Mouth
+  if (nd > 0 && nd < 3.5 && h > CREST + 0.3 && h < LAND + 1.2 && (near === 'inner' || near === 'outer' || near === 'main' || near === 'neck')) cA.lerp(stone, 0.4)
+  if (Math.hypot(x - TIP[0], z - TIP[1]) < 7) cA.copy(stone)
+  if (x > WEIR[0] - 1 && x < WEIR[1] + 1 && Math.abs(h - CREST) < 0.35) cA.copy(new THREE.Color('#7f8a86'))
+  tcol[i * 3] = cA.r; tcol[i * 3 + 1] = cA.g; tcol[i * 3 + 2] = cA.b
+}
+tg.setAttribute('color', new THREE.BufferAttribute(tcol, 3))
+tg.computeVertexNormals()
+const terrain = new THREE.Mesh(tg, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }))
+terrain.castShadow = terrain.receiveShadow = true
+terrain.scale.y = VS
+scene.add(terrain)
+
+// small trees on dry land for scale
+{
+  const geo = new THREE.ConeGeometry(1.1, 3.4, 6)
+  const mat = new THREE.MeshStandardMaterial({ color: '#2c5232', roughness: 1 })
+  const trees = new THREE.InstancedMesh(geo, mat, 900)
+  const m = new THREE.Matrix4(); let k = 0
+  for (let i = 0; i < 6000 && k < 900; i++) {
+    const x = TX[0] + hash(i, 1) * (TX[1] - TX[0]), z = TZ[0] + hash(i, 2) * (TZ[1] - TZ[0])
+    const [h, , nd] = terrainAt(x, z)
+    if (nd < 9 || h < 5.5 || h > 26 || (x > PLAIN_X - 4 && z < 18)) continue
+    if (fbm(x * 0.07, z * 0.07) < 0.47) continue
+    const s = 0.7 + hash(i, 3) * 0.7
+    m.compose(new THREE.Vector3(x, h * VS + 1.5 * s, z), new THREE.Quaternion(), new THREE.Vector3(s, s, s))
+    trees.setMatrixAt(k++, m)
+  }
+  trees.count = k
+  trees.castShadow = true
+  scene.add(trees)
+}
+
+// ================= water =================
+const waterVS = `
+attribute vec2 flow; // x: metres along the river, y: -1..1 across
+varying vec2 vFlow; varying vec3 vW;
+void main(){ vFlow = flow; vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`
+const waterFS = `
+uniform float uTime, uSpeed, uMud, uFoam, uAlpha; uniform vec3 uSun; uniform vec3 uFogColor; uniform float uFogNear, uFogFar;
+varying vec2 vFlow; varying vec3 vW;
+float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+float vn(vec2 p){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.-2.*f);
+  return mix(mix(h21(i),h21(i+vec2(1,0)),u.x), mix(h21(i+vec2(0,1)),h21(i+vec2(1,1)),u.x), u.y); }
+float fbm(vec2 p){ float s=0., a=.5; for(int i=0;i<5;i++){ s+=a*vn(p); p=p*2.02+vec2(1.7,9.2); a*=.5; } return s; }
+float field(vec2 q){ return fbm(q) ; }
+void main(){
+  float t = uTime * uSpeed;
+  vec2 q = vec2(vFlow.x*0.22 - t*0.9, vFlow.y*1.6);
+  vec2 q2 = vec2(vFlow.x*0.5 - t*1.6, vFlow.y*3.2 + 4.0);
+  float e = 0.05;
+  float h0 = field(q) + 0.5*field(q2);
+  float hx = field(q+vec2(e,0.)) + 0.5*field(q2+vec2(e*2.27,0.));
+  float hy = field(q+vec2(0.,e)) + 0.5*field(q2+vec2(0.,e*2.0));
+  vec3 N = normalize(vec3(-(hx-h0)/e*0.55, 1.0, -(hy-h0)/e*0.35));
+  vec3 V = normalize(cameraPosition - vW);
+  vec3 L = normalize(uSun);
+  float fres = pow(1.0 - max(dot(N,V),0.0), 3.0);
+  vec3 deep = mix(vec3(0.03,0.27,0.36), vec3(0.24,0.16,0.07), uMud);
+  vec3 shallow = mix(vec3(0.10,0.55,0.62), vec3(0.47,0.33,0.15), uMud);
+  float across = abs(vFlow.y);
+  vec3 col = mix(deep, shallow, smoothstep(0.2, 1.0, across)*0.7 + 0.25*h0);
+  col = mix(col, vec3(0.55,0.70,0.80), fres*0.45);
+  float spec = pow(max(dot(reflect(-L,N),V),0.0), 80.0);
+  col += vec3(1.0,0.95,0.85)*spec*(1.4 + 0.8*uMud);
+  // foam streaks grow with the flow
+  float streak = smoothstep(0.62 - 0.12*uFoam, 0.80, fbm(vec2(vFlow.x*0.12 - t*1.1, vFlow.y*7.0)));
+  col = mix(col, mix(vec3(0.92,0.95,0.93), vec3(0.86,0.78,0.62), uMud), streak*(0.16 + 0.3*uFoam));
+  float fogF = smoothstep(uFogNear, uFogFar, length(cameraPosition - vW));
+  col = mix(col, uFogColor, fogF);
+  gl_FragColor = vec4(col, uAlpha);
+  #include <colorspace_fragment>
+}`
+const waters = {}
+function makeRibbon(name, extra) {
+  const r = RIV[name]
+  const n = r.pts.length, across = 9
+  const hwMax = r.hw + r.bank + extra
+  const pos = new Float32Array(n * across * 3), flow = new Float32Array(n * across * 2), idx = []
+  for (let i = 0; i < n; i++) {
+    const a = r.pts[Math.max(0, i - 1)], b = r.pts[Math.min(n - 1, i + 1)]
+    const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz)
+    const nx = -dz / l, nz = dx / l
+    for (let j = 0; j < across; j++) {
+      const v = j / (across - 1) * 2 - 1
+      const k = i * across + j
+      pos[k * 3] = r.pts[i][0] + nx * v * hwMax; pos[k * 3 + 2] = r.pts[i][1] + nz * v * hwMax
+      flow[k * 2] = r.cum[i]; flow[k * 2 + 1] = v * hwMax / (r.hw + r.bank * 0.6)
+      if (i < n - 1 && j < across - 1) idx.push(k, k + across, k + 1, k + 1, k + across, k + across + 1)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  g.setAttribute('flow', new THREE.BufferAttribute(flow, 2))
+  g.setIndex(idx)
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: waterVS, fragmentShader: waterFS, transparent: true, side: THREE.DoubleSide,
+    uniforms: { uTime: { value: 0 }, uSpeed: { value: 1 }, uMud: { value: 0 }, uFoam: { value: 0 }, uAlpha: { value: 0.96 },
+      uSun: { value: sun.position.clone().normalize() }, uFogColor: { value: SKY }, uFogNear: { value: scene.fog.near }, uFogFar: { value: scene.fog.far } },
+  })
+  const mesh = new THREE.Mesh(g, mat)
+  mesh.scale.y = VS
+  mesh.renderOrder = 1
+  scene.add(mesh)
+  waters[name] = { mesh, r, across }
+}
+for (const n of NAMES) makeRibbon(n, n.startsWith('c') ? 0.6 : 2)
+function updateWater(t) {
+  const f = floodAt(t)
+  for (const [name, w] of Object.entries(waters)) {
+    const p = w.mesh.geometry.attributes.position
+    const n = w.r.pts.length
+    for (let i = 0; i < n; i++) {
+      const y = level(name, i / (n - 1))
+      for (let j = 0; j < w.across; j++) p.setY(i * w.across + j, y)
+    }
+    p.needsUpdate = true
+    const u = w.mesh.material.uniforms
+    u.uSpeed.value = 1
+    // integrate the speed so the texture never jumps when the speed changes
+    u.uTime.value = flowPhase(name, t)
+    u.uMud.value = name.startsWith('c') ? 0.12 * f : name === 'neck' ? 0.25 * f : (name === 'inner' ? 0.55 : 0.85) * f
+    u.uFoam.value = name.startsWith('c') ? 0 : name === 'neck' ? 0.15 + 0.2 * f : f
+  }
+}
+/** phase(t) = integral of speed: keeps the loop seamless and the motion continuous */
+function flowPhase(name, t) {
+  const steps = 240; let s = 0
+  for (let i = 0; i < steps; i++) s += speedOf(name, (i + 0.5) / steps * t)
+  return s * t / steps
+}
+
+// weir overflow sheet: from the inner channel over the crest down into the outer channel
+const spill = (() => {
+  const n = 28, m = 10
+  const pos = new Float32Array(n * m * 3), flow = new Float32Array(n * m * 2), idx = []
+  for (let i = 0; i < n; i++) {
+    const x = WEIR[0] + 1.5 + (WEIR[1] - WEIR[0] - 3) * i / (n - 1)
+    const zi = RIV.inner.pts[nearest(RIV.inner, x, 0)[1]][1], zo = RIV.outer.pts[nearest(RIV.outer, x, 0)[1]][1]
+    for (let j = 0; j < m; j++) {
+      const v = j / (m - 1)
+      const k = i * m + j
+      pos[k * 3] = x + v * 2.5; pos[k * 3 + 2] = zi + 3 + (zo - 6 - zi - 3) * v
+      flow[k * 2] = v * 20; flow[k * 2 + 1] = (i / (n - 1)) * 2 - 1
+      if (i < n - 1 && j < m - 1) idx.push(k, k + m, k + 1, k + 1, k + m, k + m + 1)
+    }
+  }
+  const g = new THREE.BufferGeometry()
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  g.setAttribute('flow', new THREE.BufferAttribute(flow, 2))
+  g.setIndex(idx)
+  const mat = new THREE.ShaderMaterial({ vertexShader: waterVS, fragmentShader: waterFS, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    uniforms: { uTime: { value: 0 }, uSpeed: { value: 2.4 }, uMud: { value: 0.6 }, uFoam: { value: 1.6 }, uAlpha: { value: 0 },
+      uSun: { value: sun.position.clone().normalize() }, uFogColor: { value: SKY }, uFogNear: { value: scene.fog.near }, uFogFar: { value: scene.fog.far } } })
+  const mesh = new THREE.Mesh(g, mat); mesh.renderOrder = 2; mesh.scale.y = VS
+  scene.add(mesh)
+  return { mesh, n, m }
+})()
+function updateSpill(t) {
+  const lin = level('inner', SW), lout = level('outer', 0.45)
+  const over = weirHead(LV.sp.weir)
+  const p = spill.mesh.geometry.attributes.position
+  for (let i = 0; i < spill.n; i++) for (let j = 0; j < spill.m; j++) {
+    const v = j / (spill.m - 1)
+    // flat over the crest, then a curved drop
+    const y = v < 0.45 ? lin + 0.05 : lin + 0.05 - (lin - lout + 0.1) * smooth((v - 0.45) / 0.55)
+    p.setY(i * spill.m + j, y)
+  }
+  p.needsUpdate = true
+  const u = spill.mesh.material.uniforms
+  u.uAlpha.value = Math.min(0.95, 0.35 + over * 0.35)
+  u.uFoam.value = 0.6 + over * 0.5
+  u.uTime.value = t * 1.0
+}
+
+// sediment: most goes down the outer channel, the rest is thrown over the weir
+const sandMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.42, 8, 6), new THREE.MeshStandardMaterial({ color: '#b8925a', roughness: 0.8 }), 140)
+scene.add(sandMesh)
+function routePoints(parts) {
+  const out = []
+  for (const [name, a, b] of parts) {
+    const r = RIV[name], n = r.pts.length
+    for (let i = Math.round(a * (n - 1)); i <= Math.round(b * (n - 1)); i++) out.push([r.pts[i][0], r.pts[i][1], name, i / (n - 1)])
+  }
+  return out
+}
+function fracAtX(name, x) { const r = RIV[name]; let bi = 0; for (let i = 0; i < r.pts.length; i++) if (Math.abs(r.pts[i][0] - x) < Math.abs(r.pts[bi][0] - x)) bi = i; return bi / (r.pts.length - 1) }
+const weirMid = (WEIR[0] + WEIR[1]) / 2
+const ROUTE_OUT = routePoints([['main', 0.25, 1], ['outer', 0, 0.85]])
+const ROUTE_WEIR = (() => {
+  const a = routePoints([['main', 0.25, 1], ['inner', 0, fracAtX('inner', weirMid)]])
+  const b = routePoints([['outer', fracAtX('outer', weirMid + 3), 0.85]])
+  return a.concat(b)
+})()
+function along(route, u) {
+  const k = Math.max(0, Math.min(route.length - 1.001, u * (route.length - 1)))
+  const i = Math.floor(k), fr = k - i, a = route[i], b = route[i + 1]
+  return [a[0] + (b[0] - a[0]) * fr, a[1] + (b[1] - a[1]) * fr, a[2], a[3], b[2]]
+}
+function updateSand(t) {
+  const f = floodAt(t)
+  const m = new THREE.Matrix4(), q4 = new THREE.Quaternion()
+  for (let i = 0; i < 140; i++) {
+    const route = i % 5 === 4 ? ROUTE_WEIR : ROUTE_OUT
+    const per = 6
+    const u = ((t / per + hash(i, 7)) % 1)
+    const [x, z, nm, s] = along(route, u)
+    const off = (hash(i, 9) - 0.5) * (nm === 'outer' || nm === 'main' ? 14 : 6)
+    const y = level(nm, s) + 0.15
+    const sc = f > 0.15 ? Math.min(1, (f - 0.15) * 2.5) * (0.6 + hash(i, 5) * 0.8) : 0
+    m.compose(new THREE.Vector3(x, y * VS, z + off), q4, new THREE.Vector3(sc, sc * 0.6, sc))
+    sandMesh.setMatrixAt(i, m)
+  }
+  sandMesh.instanceMatrix.needsUpdate = true
+}
+
+// ================= overlay =================
+const S = {
+  zh: {
+    title: '都江堰', sub: '洪水来了，田为什么不会被淹？', tag: '2200 年不建大坝，只做分流 —— 每一次工具调用，也这样过闸',
+    dTitle: '岷江来水（渠首）', dRecord: '实测最大 5,480 · 1964', dInner: '内江', dOuter: '外江', dWeir: '飞沙堰', dNeck: '宝瓶口',
+    src: '数据：《四川都江堰灌区工程手册》(1993) 渠首泄洪流量表，表间线性插值 · 水位按宽顶堰公式 Q=1.7·L·H^1.5 (L=240 m) 与 Manning 关系估算 · 竖向放大约 4 倍',
+    min: ['岷江', '上游来水'], fish: ['鱼嘴', '分水'], inner: ['内江', '窄 · 深'], outer: ['外江', '宽 · 浅'], weir: ['飞沙堰', '低堰泄洪排沙'], neck: ['宝瓶口', '控制进水量'], plain: ['成都平原', '灌区'], yulei: ['玉垒山', ''], lidui: ['离堆', ''],
+    phases: [
+      ['平水 1000 m³/s', '鱼嘴分给内江 55%，宝瓶口进水 420 m³/s'],
+      ['洪水上涨', '来水一路涨到 5500 m³/s —— 好比上百个 agent 同时开工'],
+      ['① 鱼嘴', '水越大，宽浅的外江分得越多：洪峰时外江吃走 58%，八成泥沙也走外江'],
+      ['② 飞沙堰', '内江多出的水漫过约 2 米高的低堰，1600 m³/s 连沙带石泄回外江'],
+      ['③ 宝瓶口', '岷江涨了 5.5 倍，20 米宽的宝瓶口进水只从 420 涨到 700'],
+      ['洪水退去', '田没淹，一个 key 都没被冲垮 —— 深淘滩，低作堰'],
+    ],
+    cards: [['鱼嘴 · 分流', '模型路由', '每个角色一条模型链，坏路由自动跳过，熔断沿链切换'],
+            ['飞沙堰 · 排沙', '权限闸门 · AI 拦截', '安全的放行，危险的拒绝并说明理由，灰色的逐级裁决'],
+            ['宝瓶口 · 限流', '按 key 准入', '并发上限 · 错峰发送 · 遇 429 自动收窄 · 熔断回切']],
+    ladderT: '灰色调用 · 逐级裁决', ladder: ['规则', 'AI 双审', '编排者', '你'], ladderNote: '两位判官须一致 · 网络/外发调用从不交给 AI', ladderOk: '✓ ✓ 一致 → 放行',
+    deny1: '✗ git push → 拒绝', deny2: '理由随附，agent 照着改，不硬闯',
+    meter: '并发', mStates: ['4 / 4', '429 → 收窄到 2', '连续成功 → 回升'],
+  },
+  en: {
+    title: 'Dujiangyan', sub: 'the flood comes, the fields stay dry', tag: 'No dam for 2,200 years, only division. Every tool call passes the same way.',
+    dTitle: 'Min River at the headworks', dRecord: 'record 5,480 · 1964', dInner: 'Inner', dOuter: 'Outer', dWeir: 'Weir', dNeck: 'Neck',
+    src: 'Data: Sichuan Dujiangyan Irrigation Handbook (1993), headworks discharge table, interpolated · levels from the weir formula Q=1.7·L·H^1.5 (L=240 m) and Manning · vertical ×4',
+    min: ['Min River', 'from upstream'], fish: ['Fish Mouth', 'divides'], inner: ['Inner', 'narrow · deep'], outer: ['Outer', 'wide · shallow'], weir: ['Flying Sand Weir', 'low spillway'], neck: ['Bottle-Neck', 'meters intake'], plain: ['Chengdu Plain', 'fields'], yulei: ['Yulei Hill', ''], lidui: ['Lidui', ''],
+    phases: [
+      ['1000 m³/s', 'The Fish Mouth sends 55% inside; the Bottle-Neck takes 420 m³/s'],
+      ['Flood rising', 'Up to 5500 m³/s: like a hundred agents starting at once'],
+      ['① Fish Mouth', 'The more water, the more the wide outer channel takes: 58% at the crest, and 80% of the sand'],
+      ['② Flying Sand Weir', 'Surplus tops the ~2 m weir: 1600 m³/s and its gravel go back out'],
+      ['③ Bottle-Neck', 'The river grew 5.5×; the 20 m cut went only from 420 to 700 m³/s'],
+      ['Receding', 'Fields dry, no key flooded. Dig the bed deep, keep the weir low'],
+    ],
+    cards: [['Fish Mouth', 'Model routing', 'A model chain per role; broken routes skipped, breakers fail over'],
+            ['Flying Sand Weir', 'Gate + AI judges', 'Safe passes, dangerous is denied with a reason, grey escalates'],
+            ['Bottle-Neck', 'Per-key admission', 'Concurrency cap · spacing · narrows on 429 · breaker']],
+    ladderT: 'Grey call · step by step', ladder: ['rules', 'AI × 2', 'orchestrator', 'you'], ladderNote: 'judges must agree · network calls never go to AI', ladderOk: '✓ ✓ agree → allow',
+    deny1: '✗ git push → denied', deny2: 'reason attached; the agent adapts',
+    meter: 'conc.', mStates: ['4 / 4', '429 → narrowed to 2', 'successes → grows back'],
+  },
+}[lang]
+const COL = { blue: '#4d8dff', red: '#ff6b6b', green: '#4ade80', amber: '#ffb547', accent: '#5fe0c0' }
+const ov = document.getElementById('ov')
+ov.innerHTML = `
+<div class="topfade"></div><div class="botfade"></div>
+<h1>${S.title}<small>${S.sub}</small></h1>
+<div class="tag">${S.tag}</div>
+<div class="data" id="data"></div>
+<div id="labels"></div>
+<div id="chips"></div>
+<div class="phase" id="phase"></div>
+<div class="cards" id="cards"></div><div class="src">${S.src}</div>`
+// hydrograph sparkline (Min River vs Bottle-Neck), drawn once; the playhead moves
+const SPARK = (() => {
+  const pts = fn => Array.from({ length: 91 }, (_, i) => { const tt = i / 90 * T; return `${(2 + i / 90 * 296).toFixed(1)},${(40 - fn(tt) / 6000 * 36).toFixed(1)}` }).join(' ')
+  return `<svg viewBox="0 0 300 44" width="300" height="44" style="display:block;margin-top:6px">
+  <polyline points="${pts(riverQ)}" fill="none" stroke="#d6b67a" stroke-width="2"/>
+  <polyline points="${pts(tt => split(riverQ(tt)).neck)}" fill="none" stroke="#4ade80" stroke-width="2"/>
+  <line id="playhead" x1="2" x2="2" y1="2" y2="42" stroke="#fff" stroke-opacity=".7"/></svg>`
+})()
+document.getElementById('cards').innerHTML = S.cards.map(([a, b, c], i) => {
+  const col = [COL.blue, COL.red, COL.green][i]
+  return `<div class="card" id="card${i}"><h4><span class="badge" style="background:${col}">${i + 1}</span>${a} <span style="color:#6f93a6">→</span> <span style="color:${col}">${b}</span></h4><p>${c}</p></div>`
+}).join('')
+
+// world anchors for labels (map coords -> world)
+const lab = (k, X, Y, y, color = '#e8f1f6') => ({ k, p: toW([X, Y]), y, color })
+const LABELS = [
+  lab('min', 120, 322, 10), lab('fish', 368, 346, 9, '#dfe9ea'), lab('inner', 520, 240, 10), lab('outer', 520, 416, 9),
+  lab('weir', 668, 300, 9, '#ffd2d2'), lab('neck', 905, 234, 13, '#d5ffe0'), lab('plain', 1150, 250, 5, '#d9f5c8'),
+  lab('yulei', 850, 150, 30, '#cfe0da'), lab('lidui', 918, 282, 15, '#cfe0da'),
+]
+const proj = (x, y, z) => { const v = new THREE.Vector3(x, y * VS, z).project(camera); return [(v.x + 1) / 2 * W, (1 - v.y) / 2 * H, v.z] }
+
+function overlay(t) {
+  const f = floodAt(t)
+  const sp = LV.sp
+  const fmt = v => Math.round(v / 10) * 10
+  const bar = (v, c) => `<div class="bar"><i style="width:${(v / QPEAK * 100).toFixed(1)}%;background:${c}"></i></div>`
+  document.getElementById('data').innerHTML = `
+    <div style="font-size:12.5px;color:#a9c4d1;font-weight:700">${S.dTitle}</div>
+    <div class="big"><b style="color:#e6c98f">${fmt(sp.Q).toLocaleString('en-US')}</b><span style="color:#a9c4d1">m³/s</span><span style="margin-left:auto;font-size:11.5px;color:#6f93a6">${S.dRecord}</span></div>
+    <div class="row"><span>${S.dInner}</span>${bar(sp.inner, '#38bdf8')}<span class="num">${fmt(sp.inner)} · ${Math.round(sp.inner / sp.Q * 100)}%</span></div>
+    <div class="row"><span>${S.dOuter}</span>${bar(sp.outer, '#b08d57')}<span class="num">${fmt(sp.outer)} · ${Math.round(sp.outer / sp.Q * 100)}%</span></div>
+    <div class="row"><span style="color:#ff9b9b">${S.dWeir}</span>${bar(sp.weir, '#ff6b6b')}<span class="num">${fmt(sp.weir)}</span></div>
+    <div class="row"><span style="color:#7ff0a6">${S.dNeck}</span>${bar(sp.neck, '#4ade80')}<span class="num">${fmt(sp.neck)}</span></div>
+    ${SPARK}`
+  document.getElementById('playhead').setAttribute('x1', 2 + t / T * 296)
+  document.getElementById('playhead').setAttribute('x2', 2 + t / T * 296)
+  // labels
+  const inPct = Math.round(sp.inner / sp.Q * 100), outPct = 100 - inPct
+  document.getElementById('labels').innerHTML = LABELS.map(L => {
+    const [sx, sy] = proj(L.p[0], L.y, L.p[1])
+    const [name, small] = S[L.k]
+    let extra = ''
+    if (L.k === 'inner') extra = `<span class="pct" style="color:${inPct < 50 ? COL.amber : COL.accent}">${inPct}%</span>`
+    if (L.k === 'outer') extra = `<span class="pct" style="color:${outPct > 50 ? COL.amber : COL.accent}">${outPct}%</span>`
+    return `<div class="lbl" style="left:${sx}px;top:${sy}px;color:${L.color}">${name}${extra}${small ? `<small>${small}</small>` : ''}</div>`
+  }).join('')
+  // phase caption
+  const phIdx = t < PH.rise[0] ? 0 : t < PH.fish[0] ? 1 : t < PH.weir[0] ? 2 : t < PH.neck[0] ? 3 : t < PH.end[0] ? 4 : 5
+  const [pa, pb] = S.phases[phIdx]
+  const pc = phIdx === 1 ? COL.amber : phIdx === 2 ? COL.blue : phIdx === 3 ? COL.red : phIdx === 4 ? COL.green : COL.accent
+  document.getElementById('phase').innerHTML = `<b style="color:${pc};border-color:${pc}88;background:${pc}1f">${pa}</b><span>${pb}</span>`
+  // cards
+  ;[PH.fish, PH.weir, PH.neck].forEach(([a, b], i) => {
+    const on = t >= a && t < b
+    const col = [COL.blue, COL.red, COL.green][i]
+    const el = document.getElementById('card' + i)
+    el.style.borderColor = on ? col : '#1f3d4a'
+    el.style.background = on ? `linear-gradient(180deg, ${col}24, #0b1a22)` : '#0b1a22'
+    el.style.boxShadow = on ? `0 0 24px ${col}55` : 'none'
+  })
+  // chips riding the water
+  const chips = []
+  const chip = (route, t0, t1, txt, icon, col, pause, below) => {
+    if (t < t0 || t > t1) return null
+    let u = (t - t0) / (t1 - t0)
+    if (pause) { const [pu, pa2, pb2] = pause; u = t < pa2 ? pu * (t - t0) / (pa2 - t0) : t < pb2 ? pu : pu + (1 - pu) * (t - pb2) / (t1 - pb2) }
+    const [x, z, nm, s, nm2] = along(route, u)
+    const y = level(nm, s) + 0.4
+    const [sx, sy] = proj(x, y, z)
+    const a = Math.min(1, (t - t0) / 0.4, (t1 - t) / 0.4)
+    chips.push(`<div class="chip mono" style="left:${sx}px;top:${sy}px;border-color:${col};opacity:${a}${below ? ';transform:translate(-50%,30%)' : ''}"><b style="color:${col}">${icon}</b>${txt}</div>`)
+    return [sx, sy, nm, nm2]
+  }
+  const ROUTE_OK = routePoints([['main', 0.3, 1], ['inner', 0, 1], ['neck', 0, 1], ['c2', 0, 0.45]])
+  chip(ROUTE_OK, 4.4, 10.4, 'cargo test', '✓', COL.green)
+  chip(ROUTE_WEIR, 6.7, 12.1, 'git push', '✗', COL.red, [ROUTE_WEIR.findIndex(p => p[2] === 'outer') / (ROUTE_WEIR.length - 1) - 0.02, 8.9, 9.4], true)
+  const greyStop = routePoints([['main', 0.3, 1], ['inner', 0, fracAtX('inner', WEIR[0] - 14)]]).length / (ROUTE_OK.length)
+  chip(ROUTE_OK, 5.9, 13.9, './gen.ps1', '?', COL.amber, [greyStop, 7.9, 10.3])
+  let extra = ''
+  // the grey-call ladder
+  if (t > 7.6 && t < 10.6) {
+    const a = Math.min(1, (t - 7.6) / 0.3, (10.6 - t) / 0.3)
+    const [lx, ly] = proj(...(() => { const p = toW([470, 200]); return [p[0], 12, p[1]] })())
+    const lit = i => (i === 0 && t > 7.9) || (i === 1 && t > 8.4)
+    const ok = t > 9.3
+    extra += `<div class="panel" style="left:${lx - 150}px;top:${ly - 120}px;border-color:${COL.amber};opacity:${a}">
+      <div style="color:${COL.amber};font-weight:700;font-size:15px">${S.ladderT}</div>
+      <div class="steps">${S.ladder.map((s, i) => `<span style="${lit(i) ? `border-color:${i === 1 ? COL.amber : COL.green};background:${i === 1 ? '#2a2210' : '#10261c'}` : ''}">${s}</span>`).join('<i>›</i>')}</div>
+      <div style="margin-top:8px;font-size:13px;color:${ok ? COL.green : '#a9c4d1'};font-weight:${ok ? 700 : 400}">${ok ? S.ladderOk : S.ladderNote}</div></div>`
+  }
+  if (t > 9.4 && t < 12.1) {
+    const a = Math.min(1, (t - 9.4) / 0.3, (12.1 - t) / 0.3)
+    const [dx, dy] = proj(...(() => { const p = toW([700, 470]); return [p[0], 6, p[1]] })())
+    extra += `<div class="panel" style="left:${dx - 40}px;top:${dy}px;border-color:${COL.red};opacity:${a};background:#1c0d10f0">
+      <div style="color:${COL.red};font-weight:700;font-size:15px">${S.deny1}</div><div style="font-size:13px;color:#f0c9c9;margin-top:4px">${S.deny2}</div></div>`
+  }
+  // Bottle-Neck meter
+  {
+    const [mx, my] = proj(...(() => { const p = toW([950, 330]); return [p[0], 6, p[1]] })())
+    const st = t >= 11.1 && t < 12.7 ? 1 : t >= 12.7 && t < 14.1 ? 2 : 0
+    const on = st === 1 ? 2 : st === 2 ? 3 : 4
+    const col = st === 1 ? COL.amber : st === 2 ? COL.green : '#e8f1f6'
+    extra += `<div class="meter" style="right:${W - mx - 60}px;top:${my}px"><span style="color:#a9c4d1;font-weight:700">${S.meter}</span>${[0, 1, 2, 3].map(i => `<span class="slot" style="opacity:${i < on ? 1 : .15}"></span>`).join('')}<span class="mono" style="color:${col};font-size:13px">${S.mStates[st]}</span></div>`
+  }
+  document.getElementById('chips').innerHTML = chips.join('') + extra
+}
+
+// ================= camera + frame =================
+function setCamera(t) {
+  const a = Math.sin(t / T * Math.PI * 2)
+  camera.position.set(-2 + 8 * a, 175, 190)
+  camera.lookAt(6 + 3 * a, -4, -10)
+}
+window.renderAt = t => {
+  t = ((t % T) + T) % T
+  LV = levels(t)
+  setCamera(t)
+  updateWater(t); updateSpill(t); updateSand(t)
+  renderer.render(scene, camera)
+  overlay(t)
+}
+window.T = T
+window.ready = true
+if (!q.has('capture')) {
+  const t0 = performance.now()
+  const loop = () => { window.renderAt((performance.now() - t0) / 1000 + (+q.get('t') || 0)); requestAnimationFrame(loop) }
+  loop()
+} else window.renderAt(+q.get('t') || 0)
+</script></body></html>
