@@ -114,7 +114,9 @@ test('a judge that times out keeps the call pending', async () => {
 
 test('ineligible rules never reach the judges', async () => {
   const s = setup({ replies: { [JUDGE_B]: allow(), [JUDGE_A]: allow() } })
-  for (const command of ['curl.exe -sS https://index.crates.io/config.json', 'powershell -EncodedCommand ZQBjAGgAbwA=', 'pwsh -File C:/elsewhere/x.ps1', 'git fetch']) {
+  // A script outside the roots on every OS (`C:/…` is relative on POSIX, so it would land inside the workspace).
+  const outside = path.join(path.dirname(s.ws), 'elsewhere', 'x.ps1').replaceAll('\\', '/')
+  for (const command of ['curl.exe -sS https://index.crates.io/config.json', 'powershell -EncodedCommand ZQBjAGgAbwA=', `pwsh -File ${outside}`, 'git fetch']) {
     const call = s.run(command)
     const p = await s.pending()
     assert.equal(p.ai, undefined, command)
