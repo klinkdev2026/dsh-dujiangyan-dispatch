@@ -1,13 +1,6 @@
 <p align="right"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
 
-<p align="center">
-  <img src="./assets/flood.en.webp" width="100%" alt="Animation: a flood at Dujiangyan rises from 1000 to 5500 m³/s; the Fish Mouth, the Flying Sand Weir and the Bottle-Neck keep the fields dry, mapped to model routing, the permission gate with AI interception, and per-key admission">
-  <br><sub>A flood at Dujiangyan, 1000 → 5500 m³/s: how each work keeps the fields dry, and what it is in the plugin. Flows from the <i>Sichuan Dujiangyan Irrigation District Engineering Handbook</i> (1993).</sub>
-</p>
-
-<p align="center">
-  <img src="./assets/hero.en.png" width="100%" alt="Dujiangyan: command any number of mixed-model DeepSeek Harness agents from any AI client, through one gate">
-</p>
+<h1 align="center">Dujiangyan · dsh-dujiangyan-dispatch</h1>
 
 <p align="center">
   <a href="https://github.com/klinkdev2026/dsh-dujiangyan-dispatch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/klinkdev2026/dsh-dujiangyan-dispatch/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
@@ -19,6 +12,17 @@
 </p>
 
 <h3 align="center">Let Claude Code, Codex, Kimi Code… command a whole DeepSeek Harness legion.<br>Every tool call goes through the gate; no API key gets flooded.</h3>
+
+<p align="center">For 2,200 years Dujiangyan has kept the Chengdu Plain from flooding, and it has no dam. It divides the river instead.<br>Watch a flood pass through it: each of its three works is a mechanism in this plugin.</p>
+
+<p align="center">
+  <img src="./assets/flood.en.webp" width="100%" alt="Animation: a flood at Dujiangyan rises from 1000 to 5500 m³/s; the Fish Mouth, the Flying Sand Weir and the Bottle-Neck keep the fields dry, mapped to model routing, the permission gate with AI interception, and per-key admission">
+  <br><sub>A flood at Dujiangyan, 1000 → 5500 m³/s: how each work keeps the fields dry, and what it is in the plugin. Flows from the <i>Sichuan Dujiangyan Irrigation District Engineering Handbook</i> (1993).</sub>
+</p>
+
+<p align="center">
+  <img src="./assets/hero.en.png" width="100%" alt="Dujiangyan: command any number of mixed-model DeepSeek Harness agents from any AI client, through one gate">
+</p>
 
 ---
 

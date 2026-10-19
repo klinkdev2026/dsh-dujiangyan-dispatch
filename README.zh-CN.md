@@ -1,13 +1,6 @@
 <p align="right"><a href="./README.md">English</a> · <strong>简体中文</strong></p>
 
-<p align="center">
-  <img src="./assets/flood.zh.webp" width="100%" alt="动图：都江堰洪水从 1000 涨到 5500 m³/s，鱼嘴、飞沙堰、宝瓶口让灌区不被淹，分别对应模型路由、权限闸门与 AI 拦截、按 key 准入">
-  <br><sub>一场洪水，1000 → 5500 m³/s：三大工程如何让田不被淹，以及它们在插件里对应什么。流量数据来自《四川都江堰灌区工程手册》(1993)。</sub>
-</p>
-
-<p align="center">
-  <img src="./assets/hero.zh.png" width="100%" alt="都江堰：用任意 AI 客户端，通过一道闸门，指挥任意数量、任意模型的 DeepSeek Harness agent">
-</p>
+<h1 align="center">都江堰 · dsh-dujiangyan-dispatch</h1>
 
 <p align="center">
   <a href="https://github.com/klinkdev2026/dsh-dujiangyan-dispatch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/klinkdev2026/dsh-dujiangyan-dispatch/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
@@ -19,6 +12,17 @@
 </p>
 
 <h3 align="center">让 Claude Code、Codex、Kimi Code……指挥一整支 DeepSeek Harness 军团。<br>每一次工具调用都过闸门，每一个 API key 都不被冲垮。</h3>
+
+<p align="center">都江堰两千二百年来让成都平原免于水患，靠的不是大坝，而是分流。<br>看一场洪水怎么过都江堰：它的三大工程，就是这个插件的三个机制。</p>
+
+<p align="center">
+  <img src="./assets/flood.zh.webp" width="100%" alt="动图：都江堰洪水从 1000 涨到 5500 m³/s，鱼嘴、飞沙堰、宝瓶口让灌区不被淹，分别对应模型路由、权限闸门与 AI 拦截、按 key 准入">
+  <br><sub>一场洪水，1000 → 5500 m³/s：三大工程如何让田不被淹，以及它们在插件里对应什么。流量数据来自《四川都江堰灌区工程手册》(1993)。</sub>
+</p>
+
+<p align="center">
+  <img src="./assets/hero.zh.png" width="100%" alt="都江堰：用任意 AI 客户端，通过一道闸门，指挥任意数量、任意模型的 DeepSeek Harness agent">
+</p>
 
 ---
 
