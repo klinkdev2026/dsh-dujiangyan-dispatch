@@ -88,6 +88,10 @@ test('end to end: MCP auth, sessions, gate tiers, approvals, lineage, tasks', as
     assert.equal((await pending).kind, 'allow')
     const again = await client.callTool({ name: 'djy_approval_decide', arguments: { id: list[0].id, decision: 'deny', reason: 'x' } })
     assert.equal(again.isError, true, 'second decision refused')
+    // A late note is not silently dropped: the reply says who settled it and what became of the note.
+    const late = parse(await client.callTool({ name: 'djy_approval_decide', arguments: { id: list[0].id, decision: 'allow', reason: 'x', note: 'use the mirror' } }))
+    assert.match(late.error, /already settled \(allow by /)
+    assert.match(late.note, /not delivered: no running task/)
 
     // escalate → deny carries the reason to the worker
     const pending2 = env.host.preExecute(agent, 'pwsh', { command: 'npm install' })
@@ -105,10 +109,11 @@ test('end to end: MCP auth, sessions, gate tiers, approvals, lineage, tasks', as
     assert.equal((await env.host.preExecute(child, 'mystery_tool', {})).kind, 'deny')
     const manual = await env.host.ctx.agents.create({ sessionId: 'manual', meta: { cwd: env.dir } })
     assert.equal((await env.host.preExecute(manual.agent, 'write', { file_path: path.join(env.dir, 'x'), content: '' })).kind, 'allow')
-    // timeout on a root session → a safe deny telling the worker to resubmit (no desktop ask by default)
-    const timedOut = await env.host.preExecute(agent, 'mystery_tool', {})
+    // timeout on a root session → a safe deny telling the worker to defer the step (no desktop ask by default)
+    // (a different call: the child's identical call above already timed out once in this task)
+    const timedOut = await env.host.preExecute(agent, 'mystery_tool', { x: 1 })
     assert.equal(timedOut.kind, 'deny')
-    assert.match((timedOut as { reason: string }).reason, /approval-timeout.*resubmit the same call unchanged/)
+    assert.match((timedOut as { reason: string }).reason, /approval-timeout.*submit this exact call once more near the end/)
 
     // ── a task runs, its tool calls go through the gate, the summary is parsed ──
     env.host.scripts.set('make data', [
@@ -125,6 +130,10 @@ test('end to end: MCP auth, sessions, gate tiers, approvals, lineage, tasks', as
     assert.equal(task.status, 'done')
     assert.equal(task.result.summary.changes, 'wrote data')
     assert.equal(task.result.toolCalls.length, 2, 'the task waited for the turn instead of returning at once')
+    // The gate's own record: the write ran (with its result), the benchmark without a lease was refused.
+    assert.deepEqual(task.evidence.calls, { allowed: 1, approved: 0, denied: 1 })
+    assert.equal(task.evidence.commands[0].tool, 'write')
+    assert.equal(task.evidence.commands[0].ok, true)
     const sent = agent.received.at(-1) as { source: { kind: string; taskId: string } }
     assert.equal(sent.source.kind, 'dujiangyan-dispatch', 'v4 needs a producer-owned source kind')
     assert.equal(sent.source.taskId, submitted.taskId)
@@ -152,7 +161,9 @@ test('end to end: MCP auth, sessions, gate tiers, approvals, lineage, tasks', as
     // ── events are watchable with a cursor ──
     const watched = parse(await client.callTool({ name: 'djy_events_watch', arguments: { cursor: 0, waitSeconds: 0 } }))
     const types = new Set(watched.events.map((e: any) => e.type))
-    for (const t of ['session/created', 'gate/decision', 'approval/pending', 'approval/settled', 'task/done', 'lease/acquired']) assert.ok(types.has(t), t)
+    // `bench` (the default mode) takes the machine for the benchmark command only, not for the task.
+    for (const t of ['session/created', 'gate/decision', 'approval/pending', 'approval/settled', 'task/done', 'bench/acquired', 'bench/released']) assert.ok(types.has(t), t)
+    assert.ok(!types.has('lease/acquired'), 'no task-long lease in bench mode')
     await client.close()
   } finally {
     env.host.dispose()
@@ -292,6 +303,50 @@ test('desktop archive state: archived/missing sessions are flagged and refuse ne
     workspaceSessions.splice(workspaceSessions.indexOf(b.sessionId), 1) // gone from every workspace
     list = parse(await client.callTool({ name: 'djy_session_list', arguments: {} }))
     assert.equal(byId(b.sessionId).desktop, 'missing')
+    await client.close()
+  } finally {
+    env.host.dispose()
+    await new Promise(r => setTimeout(r, 50))
+    rmSync(env.dir, { recursive: true, force: true })
+  }
+})
+
+test('findings 59: a route that renames tools is benched after two foreign calls; with no route left the task ends as an error', async () => {
+  const env = setup(18803)
+  try {
+    const client = await connect(env.url, env.token)
+    // With a fallback: the next request of the turn moves down the chain.
+    const created = parse(await client.callTool({ name: 'djy_session_create', arguments: { cwd: env.ws, role: 'implementer' } }))
+    const agent = env.host.agentsById.get(created.sessionId) as FakeAgent
+    const request = () => env.host.waterfall<any>('agent/request', [{ agent }], async () => ({ provider: 'relay', model: 'model-b' }))
+    assert.equal((await request()).model, 'model-b')
+    const first = await env.host.preExecute(agent, 'Bash', { command: 'ls' })
+    assert.equal(first.kind, 'deny')
+    assert.match((first as { reason?: string }).reason ?? '', /rewriting tool names/)
+    let status = parse(await client.callTool({ name: 'djy_status', arguments: {} }))
+    assert.equal(status.routeHealth.broken['relay/model-b'], undefined, 'one foreign call is not enough')
+    await env.host.preExecute(agent, 'Read', { file_path: 'x' })
+    status = parse(await client.callTool({ name: 'djy_status', arguments: {} }))
+    assert.match(status.routeHealth.broken['relay/model-b'].reason, /rewrites tool names/)
+    assert.equal((await request()).model, 'deepseek-flash')
+
+    // No fallback: the running task ends as an error, not done.
+    env.host.validRoutes.add('relay/model-c')
+    const lone = parse(await client.callTool({ name: 'djy_session_create', arguments: { cwd: env.ws, route: { provider: 'relay', model: 'model-c' } } }))
+    const loneAgent = env.host.agentsById.get(lone.sessionId) as FakeAgent
+    await env.host.waterfall<any>('agent/request', [{ agent: loneAgent }], async () => ({ provider: 'relay', model: 'model-c' }))
+    env.host.scripts.set('renamed tools', [{ tool: 'Bash', args: { command: 'ls' } }, { tool: 'Write', args: { file_path: 'a', content: 'b' } }, { tool: 'Bash', args: { command: 'ls' } }])
+    const t = parse(await client.callTool({ name: 'djy_task_submit', arguments: { sessionId: lone.sessionId, prompt: 'renamed tools' } }))
+    let task: any
+    for (let i = 0; i < 200; i++) {
+      task = parse(await client.callTool({ name: 'djy_task_get', arguments: { taskId: t.taskId } }))
+      if (task.status !== 'queued' && task.status !== 'running') break
+      await new Promise(r => setTimeout(r, 10))
+    }
+    assert.equal(task.status, 'error')
+    assert.match(task.error, /relay\/model-c rewrites tool names/)
+    const events = parse(await client.callTool({ name: 'djy_events_watch', arguments: { cursor: 0, waitSeconds: 0 } })).events
+    assert.ok(events.some((e: any) => e.type === 'route/foreign-tools' && e.data.argumentNames.includes('command')), 'evidence for the gateway report')
     await client.close()
   } finally {
     env.host.dispose()

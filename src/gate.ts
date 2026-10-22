@@ -11,20 +11,24 @@
  *     body (bash/pwsh `sandbox_permissions`), which never pass pre-execute.
  * Sessions outside the dispatch lineage are passed through untouched.
  */
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import path from 'node:path'
 import { homedir } from 'node:os'
-import { aiEligible, askJudges, judgeKey, type AiApproval, type AiVerdict, type JudgeInput } from './ai-approval.ts'
+import { aiEligible, askJudges, judgeKey, type AiApproval, type AiApprovalConfig, type AiVerdict, type JudgeInput } from './ai-approval.ts'
 import { summarizeForApproval, type ApprovalQueue } from './approvals.ts'
 import type { ResolvedConfig } from './config.ts'
 import type { EventLog } from './events.ts'
 import type {
-  ApprovalOutcome, ApprovalRequestEvent, ApprovalService, HostAgent, HostContext, PreToolDecision, ToolExecution,
+  ApprovalOutcome, ApprovalRequestEvent, ApprovalService, HostAgent, HostContext, PreToolDecision, SandboxPolicyService, ToolExecution,
 } from './host.ts'
-import { optional } from './host.ts'
+import { DISPATCH_CANCEL, optional } from './host.ts'
 import { canonicalPath } from './paths.ts'
 import { matchHint, type LocalRules } from './local-rules.ts'
 import { buildApprovalContext, oneLineArgs, CONTEXT_LIMITS, type ApprovalContext, type RecentCall } from './approval-context.ts'
+import type { EvidenceRecorder } from './evidence.ts'
 import type { DispatchRegistry } from './registry.ts'
-import { classify, RUN_CODE, type Verdict } from './rules.ts'
+import { classify, isBenchCommand, RUN_CODE, sandboxNoop, type RuleConfig, type Verdict } from './rules.ts'
 
 /** Heavy commands that wait while another session holds the `bench` lease (quiet mode). */
 export const QUIET_PATTERNS: readonly RegExp[] = [
@@ -42,6 +46,8 @@ export interface GateDeps {
   readonly heldResources: (rootSessionId: string) => readonly string[]
   /** The task currently running on a root session, for attribution. */
   readonly runningTask: (rootSessionId: string) => string | undefined
+  /** The task whose turn the plugin just stopped on this idle root session (cancel, needs_input, needs_attention). */
+  readonly stoppedTask?: (rootSessionId: string) => { taskId: string; status: string } | undefined
   /** Personal hot-reloaded rules layered over the profile config. */
   readonly localRules?: LocalRules
   /** Model judges for workspace-confined escalations (off unless enabled). */
@@ -54,12 +60,51 @@ export interface GateDeps {
   readonly approvalContext?: (rootSessionId: string) => { id: string; title?: string; prompt: string; lastAssistant?: string } | undefined
   /** Called once when a session's task trips the deny circuit breaker (the task is paused). */
   readonly onDenyBreaker?: (root: string, taskId: string | undefined, detail: { consecutive: number; windowDenies: number; lastRule: string }) => void
+  /** Milliseconds timestamp of the last authenticated MCP request (an orchestrator is around), if any. */
+  readonly approverSeen?: () => number | undefined
+  /** Bench rights of the task running on a root session (`command`, `task`, `shared`), if any. */
+  readonly benchMode?: (rootSessionId: string) => 'command' | 'task' | 'shared' | undefined
+  /** The machine-wide `bench` lease, taken per benchmark command in `command` mode. */
+  readonly benchLease?: { acquire(holder: string, signal: AbortSignal): Promise<void>; release(holder: string): void }
+  /** The orchestrator's quiet-mode switch (`djy_quiet_set`), when set and not expired. */
+  readonly quietOverride?: () => boolean | undefined
+  /** Records what each task really ran (calls let through, their results, build and test runs). */
+  readonly evidence?: EvidenceRecorder
+  /**
+   * A session called tool names of another agent host twice in a row (findings 55/59: a gateway
+   * renamed the tools); its route cannot work. Called once per run of such calls.
+   */
+  readonly onForeignTools?: (agent: HostAgent, root: string, taskId: string | undefined, names: readonly string[]) => void
+  /** A step that timed out again waiting for an approver; the worker was told to skip it. */
+  readonly onBlocked?: (root: string, taskId: string | undefined, step: { tool: string; rule: string; summary: string; fingerprint: string }) => void
+}
+
+/** Largest dot-sourced script the gate reads to learn the functions it defines. */
+const MAX_SCRIPT_BYTES = 256 * 1024
+
+function readWorkspaceScript(p: string): string | undefined {
+  try {
+    return statSync(p).size <= MAX_SCRIPT_BYTES ? readFileSync(p, 'utf8') : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** Prefix on every denial a worker receives, so it (and the orchestrator) can tell a gate denial from a tool error. */
 export const DENY_MARKER = '[dujiangyan-denied'
 const DENY_GUIDANCE = 'Do not retry the same action with a different formulation; adapt your approach or report it in "leftovers".'
 const denyText = (rule: string, reason: string) => `${DENY_MARKER}:${rule}] ${reason} — ${DENY_GUIDANCE}`
+
+/** The nearest ancestor of `dir` (itself included) that holds a `.git` entry. */
+function gitTopLevel(dir: string): string | undefined {
+  for (let d = path.resolve(dir), i = 0; i < 64; i++) {
+    if (existsSync(path.join(d, '.git'))) return canonicalPath(d)
+    const up = path.dirname(d)
+    if (up === d) return undefined
+    d = up
+  }
+  return undefined
+}
 
 export function installGate(ctx: HostContext, deps: GateDeps): void {
   const { config, registry, approvals, events, audit } = deps
@@ -117,6 +162,12 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
     }
   }
 
+  /** Root session → the foreign tool names it called in a row (findings 59). */
+  const foreignRun = new Map<string, string[]>()
+  /** Root sessions whose first foreign call was already logged as evidence for the gateway operator. */
+  const foreignLogged = new Set<string>()
+  /** Root sessions already told about a no-op sandbox_permissions field (one gate/hint each). */
+  const sandboxHinted = new Set<string>()
   const contextFor = (agent: HostAgent, root: string) => {
     const cwd = canonicalPath(agent.session.header.cwd ?? registry.get(root)?.cwd ?? process.cwd())
     const local = deps.localRules?.effective(cwd)
@@ -127,9 +178,31 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
         roots: config.workspaceRoots.length > 0 ? config.workspaceRoots : [canonicalPath(registry.get(root)?.cwd ?? cwd)],
         home,
         platform: process.platform,
-        holdsBench: deps.heldResources(root).includes('bench'),
+        // `command` and `shared` mode have the right to run benchmarks; `task` mode needs its lease.
+        holdsBench: (() => {
+          const mode = deps.benchMode?.(root)
+          return mode === 'command' || mode === 'shared' || deps.heldResources(root).includes('bench')
+        })(),
         config: local?.rules ?? config.rules,
         protectedDirs: [canonicalPath(config.stateDir)],
+        readScript: readWorkspaceScript,
+        ...(() => {
+          // Read per call: a session override can change it. Unreadable → undefined (the request escalates).
+          try {
+            const mode = optional<SandboxPolicyService>(ctx, 'sandboxPolicy')?.resolve({ session: agent.session }).mode
+            return typeof mode === 'string' ? { sandboxMode: mode } : {}
+          } catch {
+            return {}
+          }
+        })(),
+        isDirectory: (p: string) => {
+          try {
+            return statSync(p).isDirectory()
+          } catch {
+            return false
+          }
+        },
+        gitTopLevel,
         ...(() => {
           const scope = registry.get(root)?.writeScope
           return scope !== undefined && scope.length > 0 ? { writeScope: scope.map(p => canonicalPath(p)) } : {}
@@ -140,11 +213,40 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
 
   /** The last few gated calls per root session, so an approver sees what the worker did just before. */
   const recent = new Map<string, RecentCall[]>()
+  let callsSincePrune = 0
   const noteCall = (root: string, call: RecentCall): void => {
     const list = recent.get(root) ?? []
     list.push(call)
     if (list.length > CONTEXT_LIMITS.calls) list.shift()
     recent.set(root, list)
+    // Closed sessions leave their per-session state behind; drop it now and then.
+    if (++callsSincePrune >= 200) {
+      callsSincePrune = 0
+      for (const map of [recent, breakers] as Array<Map<string, unknown>>) {
+        for (const key of [...map.keys()]) if (registry.get(key) === undefined) map.delete(key)
+      }
+    }
+  }
+
+  /**
+   * Approval timeouts per task and call. Overnight nobody answers: telling the worker to resubmit
+   * unchanged made it wait 15 min again and again (S16 waited an hour on one call, 2026-10-21). The
+   * first timeout defers the step, the second marks it blocked, later repeats are refused at once.
+   * Any human or orchestrator decision, or the orchestrator listing approvals after the timeout,
+   * starts the count again (not just any MCP call: a long-polling orchestrator made every timeout the first).
+   */
+  const timeouts = new Map<string, { count: number; at: number }>()
+  let lastHumanDecisionAt = 0
+  const fingerprint = (tool: string, summary: string) => createHash('sha256').update(`${tool}\u0000${summary}`).digest('hex').slice(0, 16)
+  const timeoutsFor = (key: string): number => {
+    const t = timeouts.get(key)
+    if (t === undefined) return 0
+    const seen = deps.approverSeen?.()
+    if (lastHumanDecisionAt > t.at || (seen !== undefined && seen > t.at)) {
+      timeouts.delete(key)
+      return 0
+    }
+    return t.count
   }
   const approvalContext = (root: string, args: Readonly<Record<string, unknown>>): ApprovalContext => {
     const rec = registry.get(root)
@@ -160,13 +262,12 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
   const isRootSession = (agent: HostAgent, root: string) => agent.session.id === root || agent.session.header.id === root
 
   /** Run the AI judges on a pending approval; only a unanimous answer settles it, anything else stays for a human. */
-  const judgeApproval = async (id: string, meta: { sessionId: string; taskId?: string; tool: string; rule: string }, input: JudgeInput, signal: AbortSignal) => {
-    const ai = deps.aiApproval?.current()
-    if (ai === undefined) return
+  const judgeApproval = async (id: string, meta: { sessionId: string; taskId?: string; tool: string; rule: string }, input: JudgeInput, signal: AbortSignal, ai: AiApprovalConfig) => {
     const judges = ai.judges.map(judgeKey)
     if (deps.aiApproval?.takeBudget(meta.sessionId) === false) {
       const opinions = [{ judge: 'budget', decision: 'human' as const, reason: `AI approval budget used up for this session (${ai.maxPerSessionPer10Min} judgments per 10 min)`, latencyMs: 0 }]
       approvals.annotate(id, { status: 'split', opinions })
+      approvals.publish(id)
       events.append('approval/ai', { id, ...meta, status: 'over-budget', opinions })
       audit({ type: 'approval/ai', id, ...meta, judges, outcome: 'over-budget' })
       return
@@ -188,6 +289,8 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
     const applied = verdict.outcome === 'allow' ? approvals.decide(id, 'allow', reasons, decider)
       : verdict.outcome === 'deny' ? approvals.decide(id, 'deny', reasons, decider)
         : approvals.annotate(id, { status: 'split', opinions: verdict.opinions })
+    // Split (or failed): now it is the orchestrator's to decide, so it enters the event stream.
+    if (verdict.outcome === 'pending') approvals.publish(id)
     for (const o of verdict.opinions) deps.aiApproval?.record(o, 'live')
     audit({ type: 'approval/ai', id, ...meta, judges, outcome: verdict.outcome, applied, opinions: verdict.opinions })
     events.append('approval/ai', { id, ...meta, status: verdict.outcome === 'pending' ? 'split' : verdict.outcome, applied, opinions: verdict.opinions })
@@ -197,7 +300,72 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
   const quietPatterns = (): { enabled: boolean; patterns: RegExp[] } => {
     const local = deps.localRules?.quietMode()
     const extra = [...config.quietMode.patterns, ...local?.patterns ?? []].map(p => new RegExp(p, 'i'))
-    return { enabled: local?.enabled ?? config.quietMode.enabled, patterns: [...QUIET_PATTERNS, ...extra] }
+    return { enabled: deps.quietOverride?.() ?? local?.enabled ?? config.quietMode.enabled, patterns: [...QUIET_PATTERNS, ...extra] }
+  }
+
+  /**
+   * Heavy commands running now, by execution (or call id), so a benchmark can wait for them to end.
+   * Entries leave on `tools/result`; ones whose result never came are dropped after a few hours.
+   */
+  const inflight = new Map<unknown, { root: string; at: number }>()
+  const callKey = (exec: ToolExecution): unknown => exec.callId ?? exec
+  const noteHeavy = (exec: ToolExecution, root: string, command: string | undefined, rules: RuleConfig | undefined): void => {
+    if (command === undefined || isBenchCommand(command, rules) || !quietPatterns().patterns.some(re => re.test(command))) return
+    const now = Date.now()
+    for (const [k, v] of inflight) if (now - v.at > 3 * 3600_000) inflight.delete(k)
+    inflight.set(callKey(exec), { root, at: now })
+  }
+
+  /** Benchmark commands holding the `bench` lease for just their own run (`command` mode). */
+  const machineHeld = new Map<unknown, { taskId: string; tool: string; at: number }>()
+  const releaseKey = (key: unknown, type: string): void => {
+    const held = machineHeld.get(key)
+    if (held === undefined) return
+    machineHeld.delete(key)
+    // The lease is per task and re-entrant: parallel benchmarks of one task share it, so only the
+    // last one to finish gives it back (review F1: the first result freed the machine mid-run).
+    const stillRunning = [...machineHeld.values()].filter(v => v.taskId === held.taskId).length
+    if (stillRunning === 0) deps.benchLease?.release(held.taskId)
+    events.append(type, { taskId: held.taskId, tool: held.tool, ...stillRunning > 0 ? { stillRunning } : {} })
+  }
+  const releaseMachine = (exec: ToolExecution): void => releaseKey(callKey(exec), 'bench/released')
+  /** A benchmark whose result never came (host crash, lost event) must not hold the machine for good. */
+  const expireMachine = (now: number): void => {
+    for (const [k, v] of machineHeld) if (now - v.at > 3 * 3600_000) releaseKey(k, 'bench/lease-expired')
+  }
+  /**
+   * In `command` mode a benchmark takes the machine only while it runs: it waits for the lease,
+   * then for heavy commands of other sessions already running (bounded), and gives it back when its
+   * result arrives (findings 32, 38, 41, 51: report writing no longer holds everyone else).
+   */
+  const takeMachine = async (exec: ToolExecution, root: string, taskId: string | undefined, command: string | undefined, rules: RuleConfig | undefined): Promise<'ok' | 'cancelled'> => {
+    if (command === undefined || taskId === undefined || deps.benchLease === undefined || deps.benchMode?.(root) !== 'command' || !isBenchCommand(command, rules)) return 'ok'
+    const started = Date.now()
+    expireMachine(started)
+    events.append('bench/waiting', { taskId, tool: exec.name, command: command.slice(0, 200) })
+    try {
+      await deps.benchLease.acquire(taskId, exec.signal)
+    } catch {
+      events.append('bench/cancelled', { taskId, tool: exec.name })
+      return 'cancelled'
+    }
+    machineHeld.set(callKey(exec), { taskId, tool: exec.name, at: Date.now() })
+    exec.signal.addEventListener('abort', () => releaseMachine(exec), { once: true })
+    const deadline = Date.now() + config.quietMode.maxWaitMs
+    const poll = deps.quietPollMs ?? 1000
+    while ([...inflight.values()].some(f => f.root !== root)) {
+      if (exec.signal.aborted) {
+        releaseKey(callKey(exec), 'bench/cancelled')
+        return 'cancelled'
+      }
+      if (Date.now() >= deadline) {
+        events.append('bench/noisy', { taskId, reason: 'heavy commands of other sessions were still running when the benchmark started' })
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, poll))
+    }
+    events.append('bench/acquired', { taskId, tool: exec.name, waitedMs: Date.now() - started })
+    return 'ok'
   }
   const waitForQuiet = async (signal: AbortSignal): Promise<'free' | 'timeout' | 'cancelled'> => {
     const deadline = Date.now() + config.quietMode.maxWaitMs
@@ -222,6 +390,16 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
     const root = registry.rootOf(agent)
     if (root === undefined) return next()
 
+    // A turn the plugin stopped keeps calling tools (findings 58): refuse and stop it again.
+    const stopped = deps.runningTask(root) === undefined ? deps.stoppedTask?.(root) : undefined
+    if (stopped !== undefined) {
+      const record = { type: 'gate', sessionId: agent.session.id, root, taskId: stopped.taskId, tool: exec.name, callId: exec.callId, kind: 'deny', rule: 'task-stopped' }
+      audit(record)
+      events.append('gate/decision', { ...record, reason: `task ${stopped.status}` })
+      try { agent.cancel(DISPATCH_CANCEL) } catch { /* the turn may already be over */ }
+      return { kind: 'deny', reason: denyText('task-stopped', `your task ended (${stopped.status}); do not call more tools, end your turn now`), info: { name: 'DujiangyanDenied', code: 'DJY_DENIED', reason: 'task-stopped' } }
+    }
+
     const args = (exec.arguments !== null && typeof exec.arguments === 'object' ? exec.arguments : {}) as Record<string, unknown>
     const outerRunCode = exec.name === RUN_CODE && exec.parent === undefined
     let verdict: Verdict
@@ -237,7 +415,26 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
       if (hint !== undefined) verdict = { kind: 'deny', rule: hint.id, reason: `${hint.reason} (would have needed approval: ${verdict.rule})` }
     }
     const command = typeof args['command'] === 'string' ? args['command'] : undefined
-    if (verdict.kind === 'allow' && command !== undefined && !context.gate.holdsBench && deps.benchHolder?.() !== undefined) {
+    const taskId = deps.runningTask(root)
+    if (verdict.rule === 'foreign-tool') {
+      const run = [...foreignRun.get(root) ?? [], exec.name]
+      foreignRun.set(root, run)
+      if (!foreignLogged.has(root)) {
+        foreignLogged.add(root)
+        // Evidence for the gateway's bug report: the name the model used and the argument names it sent
+        // (they show which tool of this harness it meant). Not used for any mapping.
+        events.append('route/foreign-tools', { sessionId: agent.session.id, root, taskId, tool: exec.name, argumentNames: Object.keys(args).slice(0, 12) })
+      }
+      if (run.length === 2) deps.onForeignTools?.(agent, root, taskId, run)
+    } else {
+      foreignRun.delete(root)
+    }
+    // Another session's benchmark holds the machine (this task's own lease, task- or command-long, does not count).
+    const othersBench = () => {
+      const h = deps.benchHolder?.()
+      return h !== undefined && h !== taskId && !deps.heldResources(root).includes('bench')
+    }
+    if (verdict.kind === 'allow' && command !== undefined && !isBenchCommand(command, context.gate.config) && othersBench()) {
       const quiet = quietPatterns()
       if (quiet.enabled && quiet.patterns.some(re => re.test(command))) {
         const started = Date.now()
@@ -254,8 +451,14 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
         }
       }
     }
-    const taskId = deps.runningTask(root)
-    const record = { type: 'gate', sessionId: agent.session.id, root, taskId, tool: exec.name, callId: exec.callId, kind: verdict.kind, rule: verdict.rule }
+    // A sandbox request for the mode the call already has was judged as if absent: audit that (not an
+    // approved escalation) and tell the orchestrator once per session; the worker is not told (findings 57).
+    const sandboxIgnored = args['sandbox_permissions'] !== undefined && sandboxNoop(args, context.gate)
+    if (sandboxIgnored && !sandboxHinted.has(root)) {
+      sandboxHinted.add(root)
+      events.append('gate/hint', { sessionId: agent.session.id, root, taskId, tool: exec.name, hint: 'sandbox-permissions-noop', detail: `the worker sends sandbox_permissions "${String(args['sandbox_permissions'])}", equal to its current mode; the field is ignored and the call judged normally` })
+    }
+    const record = { type: 'gate', sessionId: agent.session.id, root, taskId, tool: exec.name, callId: exec.callId, kind: verdict.kind, rule: verdict.rule, ...sandboxIgnored ? { sandboxPermissions: 'ignored: equal-to-effective' } : {} }
     audit(verdict.kind === 'allow' ? record : { ...record, reason: verdict.reason })
     if (verdict.kind !== 'allow') events.append('gate/decision', { ...record, reason: verdict.reason })
 
@@ -268,19 +471,37 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
     if (verdict.kind === 'allow') {
       noteVerdict(root, taskId, false, verdict.rule)
       noteCall(root, { ...tagged, tool: exec.name, args: line, verdict: 'allow', rule: verdict.rule })
+      if ((await takeMachine(exec, root, taskId, command, context.gate.config)) === 'cancelled') return { kind: 'cancel' }
+      noteHeavy(exec, root, command, context.gate.config)
+      if (taskId !== undefined) deps.evidence?.started(exec, taskId, exec.name, args, verdict.rule)
       return next()
     }
     if (verdict.kind === 'deny') {
       noteVerdict(root, taskId, true, verdict.rule)
       noteCall(root, { ...tagged, tool: exec.name, args: line, verdict: 'deny', rule: verdict.rule })
       noteRefused(agent.session.id, exec.name, exec.callId)
+      if (taskId !== undefined) deps.evidence?.denied(taskId)
       return { kind: 'deny', reason: denyText(verdict.rule, verdict.reason), info: { name: 'DujiangyanDenied', code: 'DJY_DENIED', reason: verdict.rule } }
     }
 
     const { summary, truncated } = summarizeForApproval(args)
+    const timeoutKey = `${taskId ?? root}|${fingerprint(exec.name, summary)}`
+    if (timeoutsFor(timeoutKey) >= 2) {
+      // Asked twice and nobody answered: do not park the worker for another full timeout.
+      deps.onBlocked?.(root, taskId, { tool: exec.name, rule: verdict.rule, summary, fingerprint: timeoutKey })
+      events.append('approval/unavailable', { sessionId: agent.session.id, ...tagged, tool: exec.name, rule: verdict.rule })
+      noteCall(root, { ...tagged, tool: exec.name, args: line, verdict: 'deny', rule: 'approval-unavailable' })
+      if (taskId !== undefined) deps.evidence?.denied(taskId)
+      return {
+        kind: 'deny',
+        reason: denyText('approval-unavailable', `no approver has answered this call (${verdict.rule}) twice; do not submit it again in this task. List it in "leftovers" as BLOCKED-ON-APPROVAL with what it would do, then finish the rest of the task or wrap up`),
+        info: { name: 'DujiangyanDenied', code: 'DJY_APPROVAL_UNAVAILABLE', reason: 'approval-unavailable' },
+      }
+    }
     // Built before this call joins the ring, so `recentCalls` are the calls that came before it.
     const callContext = approvalContext(root, args)
-    const ai = deps.aiApproval?.current()
+    // The judges of this session (or its batch or folder), else the global ones.
+    const ai = deps.aiApproval?.current(root)
     const judged = ai !== undefined && ai.enabled && aiEligible(verdict.rule, truncated)
     const meta = { sessionId: agent.session.id, ...taskId !== undefined ? { taskId } : {}, tool: exec.name, rule: verdict.rule }
     const input: JudgeInput = {
@@ -304,18 +525,21 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
       cwd: agent.session.header.cwd ?? '',
       origin: 'pre-execute',
       context: callContext,
-    }, config.approvalTimeoutMs, exec.signal, judged ? id => void judgeApproval(id, meta, input, exec.signal) : undefined)
+    }, config.approvalTimeoutMs, exec.signal, judged ? id => void judgeApproval(id, meta, input, exec.signal, ai) : undefined,
+    // While the judges decide, the orchestrator is not told; a unanimous verdict never reaches its stream.
+    judged ? { deferEvent: true, publishAfterMs: ai.timeoutMs * 2 + 5000 } : {})
     noteCall(root, {
       ...tagged, tool: exec.name, args: line, verdict: `escalate → ${result.kind}`, rule: verdict.rule,
       ...result.kind === 'allow' || result.kind === 'deny' ? { decider: result.decider } : {},
     })
+    if ((result.kind === 'allow' || result.kind === 'deny') && !result.decider.startsWith('ai:')) lastHumanDecisionAt = Date.now()
 
     switch (result.kind) {
       case 'allow': {
         // An approval does not exempt a heavy command from quiet mode: an approved build would
         // otherwise run while another session's benchmark holds the machine.
         // (A quiet-timeout approval is an explicit decision to run during the benchmark.)
-        if (command !== undefined && verdict.rule !== 'quiet-timeout' && !context.gate.holdsBench && deps.benchHolder?.() !== undefined) {
+        if (command !== undefined && verdict.rule !== 'quiet-timeout' && !isBenchCommand(command, context.gate.config) && othersBench()) {
           const quiet = quietPatterns()
           if (quiet.enabled && quiet.patterns.some(re => re.test(command))) {
             const started = Date.now()
@@ -330,17 +554,21 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
           }
         }
         noteVerdict(root, taskId, false, verdict.rule)
-        if (args['sandbox_permissions'] !== undefined && exec.callId !== undefined) {
+        if (args['sandbox_permissions'] !== undefined && !sandboxIgnored && exec.callId !== undefined) {
           preApproved.add(exec.callId)
           // A call the host never re-asks about would stay forever: keep only the most recent ones.
           if (preApproved.size > 1000) preApproved.delete(preApproved.values().next().value as string)
         }
+        if ((await takeMachine(exec, root, taskId, command, context.gate.config)) === 'cancelled') return { kind: 'cancel' }
+        noteHeavy(exec, root, command, context.gate.config)
+        if (taskId !== undefined) deps.evidence?.started(exec, taskId, exec.name, args, verdict.rule, result.decider)
         return next()
       }
       case 'deny':
         // AI denials count toward the breaker; a human's or the orchestrator's are guidance.
         if (result.decider.startsWith('ai:')) noteVerdict(root, taskId, true, verdict.rule)
         noteRefused(agent.session.id, exec.name, exec.callId)
+        if (taskId !== undefined) deps.evidence?.denied(taskId)
         return { kind: 'deny', reason: denyText('approver', `${result.decider} denied this call: ${result.reason}`), info: { name: 'DujiangyanDenied', code: 'DJY_APPROVER_DENIED', reason: result.reason } }
       case 'cancelled':
         return { kind: 'cancel' }
@@ -359,15 +587,34 @@ export function installGate(ctx: HostContext, deps: GateDeps): void {
           }
         }
         noteRefused(agent.session.id, exec.name, exec.callId)
-        events.append('approval/timeout', { sessionId: agent.session.id, ...tagged, tool: exec.name, rule: verdict.rule })
+        if (taskId !== undefined) deps.evidence?.denied(taskId)
+        const count = timeoutsFor(timeoutKey) + 1
+        timeouts.set(timeoutKey, { count, at: Date.now() })
+        if (timeouts.size > 1000) timeouts.delete(timeouts.keys().next().value as string)
+        events.append('approval/timeout', { sessionId: agent.session.id, ...tagged, tool: exec.name, rule: verdict.rule, count })
+        const mins = Math.round(config.approvalTimeoutMs / 60_000)
+        if (count >= 2) deps.onBlocked?.(root, taskId, { tool: exec.name, rule: verdict.rule, summary, fingerprint: timeoutKey })
         return {
           kind: 'deny',
-          reason: denyText('approval-timeout', `the approver did not answer in time (${verdict.rule}); resubmit the same call unchanged — it will be decided then. Do not rewrite it or try to run it another way`),
+          reason: count === 1
+            ? denyText('approval-timeout', `no approver answered within ${mins} min (${verdict.rule}); nobody may be available right now. Continue with the parts of the task that do not need this step and submit this exact call once more near the end. Do not rewrite it or try to run it another way`)
+            : denyText('approval-timeout', `still no approver (${verdict.rule}); do not submit this call again in this task. List it in "leftovers" as BLOCKED-ON-APPROVAL with what it would do, then finish the rest of the task or wrap up`),
           info: { name: 'DujiangyanDenied', code: 'DJY_APPROVAL_TIMEOUT', reason: 'approval-timeout' },
         }
       }
     }
   }, { prepend: true })
+
+  // The frozen final outcome of every call: completes the evidence record of calls the gate let through.
+  ctx.on('tools/result', (exec: ToolExecution, result: unknown) => {
+    inflight.delete(callKey(exec))
+    releaseMachine(exec)
+    try {
+      deps.evidence?.finished(exec, result)
+    } catch {
+      // Evidence is best effort; a malformed result must never disturb the host.
+    }
+  })
 
   ctx.on('approval/request', async (req: ApprovalRequestEvent, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome> => {
     const root = registry.rootOf(req.agent)

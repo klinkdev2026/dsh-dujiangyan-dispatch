@@ -307,3 +307,16 @@ test('an attached redirect (>f) does not hide the next write target (review H1)'
   assert.equal(cmd('rm >f data/x.txt').kind, 'allow')
   assert.equal(cmd('rm data/x.txt 2>&1').kind, 'allow')
 })
+
+test('PowerShell aliases are normalized: read aliases pass, write aliases keep their target checks', () => {
+  assert.equal(cmd('Get-ChildItem data -File | ? { $_.Length -gt 0 } | % { $_.Name }').kind, 'allow')
+  assert.equal(cmd('gci data | select Name,Length | ft -AutoSize').kind, 'allow')
+  assert.equal(cmd('gc data/a.txt | sls pattern').kind, 'allow')
+  assert.notEqual(cmd('ri -Recurse C:/Users/u/Documents').kind, 'allow')
+  assert.notEqual(cmd('ni C:/Windows/x.txt').kind, 'allow')
+  assert.notEqual(cmd('gci data | % { Remove-Item C:/Windows/x.txt }').kind, 'allow', 'commands inside a ForEach block are still judged')
+})
+
+test('the host tool that reports bundled runtime paths is read-only', () => {
+  assert.equal(kind('load_workspace_dependencies', {}), 'allow')
+})

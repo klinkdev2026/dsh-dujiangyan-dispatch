@@ -1,3 +1,4 @@
+import type { Judge } from './ai-approval.ts';
 import type { RouteEntry } from './config.ts';
 import type { HostAgent, HostContext, HostSession } from './host.ts';
 export interface DispatchedSession {
@@ -13,6 +14,8 @@ export interface DispatchedSession {
     readonly writeScope?: readonly string[];
     /** The route chain; requests use its first healthy entry. */
     readonly chain: readonly RouteEntry[];
+    /** AI approval judges of this session (set at create or by `djy_ai_approval_set`); absent = folder or global judges. */
+    judges?: readonly Judge[];
     readonly createdAt: string;
     closedAt?: string;
 }
@@ -25,6 +28,8 @@ export declare class DispatchRegistry {
     private readonly closed;
     add(rec: DispatchedSession): void;
     close(sessionId: string): void;
+    /** Give a session its own AI judges, or (`undefined`) return it to the folder or global ones. */
+    setJudges(sessionId: string, judges: readonly Judge[] | undefined): boolean;
     get(sessionId: string): DispatchedSession | undefined;
     list(): DispatchedSession[];
     get size(): number;

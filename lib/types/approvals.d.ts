@@ -45,17 +45,39 @@ export interface PendingApproval extends ApprovalRequest {
     readonly expiresAt: string;
     readonly ai?: AiAnnotation;
 }
+/** What became of an approval that is no longer pending (kept briefly, e.g. to deliver a late note). */
+export interface SettledApproval {
+    readonly id: string;
+    readonly sessionId: string;
+    readonly taskId?: string;
+    readonly result: ApprovalResult['kind'];
+    readonly decider?: string;
+    readonly at: string;
+}
+export interface RequestOptions {
+    /**
+     * Hold the `approval/pending` event back (AI judges are deciding): `publish()` writes it, at the
+     * latest after `publishAfterMs`. An approval the judges settle never reaches the orchestrator's stream.
+     */
+    readonly deferEvent?: boolean;
+    readonly publishAfterMs?: number;
+}
 export declare class ApprovalQueue {
     private readonly entries;
+    private readonly recentlySettled;
     private readonly events;
     private readonly audit;
     private readonly now;
     constructor(events: EventLog, audit: (record: Record<string, unknown>) => void, now?: () => number);
     /** Park one request until decided, timed out, or aborted. `onCreated` receives the id once it is listed. */
-    request(req: ApprovalRequest, timeoutMs: number, signal?: AbortSignal, onCreated?: (id: string) => void): Promise<ApprovalResult>;
+    request(req: ApprovalRequest, timeoutMs: number, signal?: AbortSignal, onCreated?: (id: string) => void, opts?: RequestOptions): Promise<ApprovalResult>;
     /** A signal that aborts when the approval settles (any decider, timeout or cancel); undefined once settled. */
     settledSignal(id: string): AbortSignal | undefined;
     list(): PendingApproval[];
+    /** Write a deferred `approval/pending` event (with the judges' opinions attached by then). */
+    publish(id: string): void;
+    /** The outcome of an approval settled recently (the last few hundred), if any. */
+    settled(id: string): SettledApproval | undefined;
     /** Decide a pending approval. Returns false when it is unknown or already settled. */
     decide(id: string, decision: ApprovalDecision, reason: string, decider: string): boolean;
     /** Attach the AI judges' opinions to a pending approval. Returns false when it is no longer pending. */

@@ -56,10 +56,34 @@ interface Entry {
   readonly settle: (result: ApprovalResult) => void
   /** Aborted when the approval settles, so work done on its behalf (AI judges) stops. */
   readonly settled: AbortController
+  /** Whether `approval/pending` has been written to the event log (it waits while AI judges decide). */
+  published: boolean
 }
+
+/** What became of an approval that is no longer pending (kept briefly, e.g. to deliver a late note). */
+export interface SettledApproval {
+  readonly id: string
+  readonly sessionId: string
+  readonly taskId?: string
+  readonly result: ApprovalResult['kind']
+  readonly decider?: string
+  readonly at: string
+}
+
+export interface RequestOptions {
+  /**
+   * Hold the `approval/pending` event back (AI judges are deciding): `publish()` writes it, at the
+   * latest after `publishAfterMs`. An approval the judges settle never reaches the orchestrator's stream.
+   */
+  readonly deferEvent?: boolean
+  readonly publishAfterMs?: number
+}
+
+const MAX_SETTLED = 500
 
 export class ApprovalQueue {
   private readonly entries = new Map<string, Entry>()
+  private readonly recentlySettled = new Map<string, SettledApproval>()
 
   private readonly events: EventLog
   private readonly audit: (record: Record<string, unknown>) => void
@@ -72,7 +96,7 @@ export class ApprovalQueue {
   }
 
   /** Park one request until decided, timed out, or aborted. `onCreated` receives the id once it is listed. */
-  request(req: ApprovalRequest, timeoutMs: number, signal?: AbortSignal, onCreated?: (id: string) => void): Promise<ApprovalResult> {
+  request(req: ApprovalRequest, timeoutMs: number, signal?: AbortSignal, onCreated?: (id: string) => void, opts: RequestOptions = {}): Promise<ApprovalResult> {
     if (signal?.aborted === true) return Promise.resolve({ kind: 'cancelled' })
     const id = `apr_${randomUUID().slice(0, 12)}`
     const created = this.now()
@@ -91,19 +115,30 @@ export class ApprovalQueue {
         done = true
         settled.abort()
         clearTimeout(timer)
+        clearTimeout(publishTimer)
         signal?.removeEventListener('abort', onAbort)
+        const entry = this.entries.get(id)
         this.entries.delete(id)
+        const decider = result.kind === 'allow' || result.kind === 'deny' ? result.decider : undefined
+        const aiSettled = decider?.startsWith('ai:') === true
+        // Not yet announced and not settled by the judges: announce it now, so the stream stays consistent.
+        if (entry !== undefined && !entry.published && !aiSettled) this.events.append('approval/pending', { ...entry.pending })
+        this.recentlySettled.set(id, { id, sessionId: req.sessionId, ...req.taskId !== undefined ? { taskId: req.taskId } : {}, result: result.kind, ...decider !== undefined ? { decider } : {}, at: new Date(this.now()).toISOString() })
+        if (this.recentlySettled.size > MAX_SETTLED) this.recentlySettled.delete(this.recentlySettled.keys().next().value as string)
         this.audit({ type: 'approval/settled', id, sessionId: req.sessionId, tool: req.tool, rule: req.rule, ...result })
-        this.events.append('approval/settled', { id, sessionId: req.sessionId, taskId: req.taskId, tool: req.tool, result: result.kind })
+        this.events.append('approval/settled', { id, sessionId: req.sessionId, taskId: req.taskId, tool: req.tool, result: result.kind, ...aiSettled ? { aiSettled: true, decider } : {} })
         resolve(result)
       }
       const onAbort = () => settle({ kind: 'cancelled' })
       const timer = setTimeout(() => settle({ kind: 'timeout' }), timeoutMs)
       timer.unref?.()
+      const defer = opts.deferEvent === true
+      const publishTimer = defer ? setTimeout(() => this.publish(id), opts.publishAfterMs ?? 60_000) : undefined
+      publishTimer?.unref?.()
       signal?.addEventListener('abort', onAbort, { once: true })
-      this.entries.set(id, { pending, settle, settled })
+      this.entries.set(id, { pending, settle, settled, published: !defer })
       this.audit({ type: 'approval/pending', ...pending })
-      this.events.append('approval/pending', { ...pending })
+      if (!defer) this.events.append('approval/pending', { ...pending })
       onCreated?.(id)
     })
   }
@@ -115,6 +150,19 @@ export class ApprovalQueue {
 
   list(): PendingApproval[] {
     return [...this.entries.values()].map(e => e.pending)
+  }
+
+  /** Write a deferred `approval/pending` event (with the judges' opinions attached by then). */
+  publish(id: string): void {
+    const entry = this.entries.get(id)
+    if (entry === undefined || entry.published) return
+    entry.published = true
+    this.events.append('approval/pending', { ...entry.pending })
+  }
+
+  /** The outcome of an approval settled recently (the last few hundred), if any. */
+  settled(id: string): SettledApproval | undefined {
+    return this.recentlySettled.get(id)
   }
 
   /** Decide a pending approval. Returns false when it is unknown or already settled. */
@@ -184,6 +232,7 @@ const SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   [new RegExp(String.raw`(--?(?:api[-_]?key|access[-_]?key|secret(?:[-_]key)?|token|auth[-_]?token|password|passwd|pwd)(?:\s+|=))${VALUE}`, 'gi'), '$1***'],
   [new RegExp(String.raw`(\b[A-Za-z0-9_]*(?:API_?KEY|ACCESS_?KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Za-z0-9_]*\s*=\s*)${VALUE}`, 'gi'), '$1***'],
   [/\bsk-[A-Za-z0-9_-]{12,}/g, 'sk-***'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, '***'], // a JWT
   [/\b(?:ghp|gho|ghu|ghs|github_pat|xox[abprs])_[A-Za-z0-9_]{10,}/g, '***'],
 ]
 

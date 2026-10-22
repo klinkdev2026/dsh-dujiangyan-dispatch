@@ -91,6 +91,31 @@ test('a judge that refuses the temperature override is retried without it, and r
   assert.equal(s.host.modelCalls.filter(c => c.route === JUDGE_A).at(-1)?.options?.temperature, 0)
 })
 
+test('event stream: a call the judges settle never shows up as pending for the orchestrator', async () => {
+  const s = setup({ replies: { [JUDGE_B]: allow(), [JUDGE_A]: allow() } })
+  assert.equal((await s.run('frobnicate --list')).kind, 'allow')
+  const evs = s.events.since(0, 100).events
+  assert.equal(evs.filter(e => e.type === 'approval/pending').length, 0)
+  const settled = evs.find(e => e.type === 'approval/settled')?.data as Record<string, unknown>
+  assert.equal(settled['aiSettled'], true)
+  assert.equal(settled['decider'], 'ai:judge-a+judge-b')
+  // Still auditable, and its outcome can be looked up afterwards.
+  assert.ok(s.audits.some(a => a['type'] === 'approval/pending'))
+  assert.equal(s.approvals.settled(String(settled['id']))?.result, 'allow')
+})
+
+test('event stream: a split is announced once, after the judges, carrying their opinions', async () => {
+  const s = setup({ replies: { [JUDGE_A]: allow(), [JUDGE_B]: human('touches config') } })
+  const call = s.run('frobnicate --x')
+  const p = await s.pending(true)
+  const announced = s.events.since(0, 100).events.filter(e => e.type === 'approval/pending')
+  assert.equal(announced.length, 1)
+  assert.equal(((announced[0]?.data as { ai?: { status: string } }).ai)?.status, 'split')
+  s.approvals.decide(p.id, 'allow', 'ok', 'orchestrator')
+  await call
+  assert.equal(s.events.since(0, 100).events.filter(e => e.type === 'approval/pending').length, 1)
+})
+
 test('a split (or "human") leaves the call pending with the opinions attached', async () => {
   const s = setup({ replies: { [JUDGE_A]: allow(), [JUDGE_B]: human('touches config') } })
   const call = s.run('frobnicate --x')
@@ -258,7 +283,7 @@ test('local-rules.json can override AI approval and quiet mode (validated, top l
   const ai = new AiApproval(() => base, () => ({ enabled: true }))
   assert.equal(ai.current().enabled, true)
   assert.equal(ai.current().source, 'local-rules')
-  assert.equal(ai.current().judges.length, 2)
+  assert.equal(ai.current().judges.length, 1, 'the default roster has one distinct model, so one judge until a second vendor is configured')
   ai.setEnabled(false)
   assert.deepEqual([ai.current().enabled, ai.current().source], [false, 'runtime'])
 })

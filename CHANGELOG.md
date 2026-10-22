@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.2.0
+
+Low weir: let the safe flow through. Replayed against a real day (2026-10-20: 130 approvals in 6.5 hours, 12 overnight timeouts), these changes leave 16 calls for an approver and none of the overnight ones.
+
+**Gate: precise allowances** (each with its escape variants tested on the deny side)
+- `Start-Process` is judged like a direct call of the program it starts, when the command waits for it (`-Wait`, `$p.WaitForExit(ms)`, `Wait-Process`): workspace binaries, interpreters and listed programs run; redirect files are write targets; the working directory must be inside the roots; `-Verb RunAs` is refused; an unwaited process (it would outlive the call) still needs approval.
+- `$env:TEMP` / `$env:TMP` are the worker's own scratch directory (no `..`, no wildcard delete of the whole directory).
+- Values the gate can now follow: `Join-Path` of literals, `$PWD`, `(Resolve-Path <literal>).Path`, literal lists (`'a','b'`, `@('a', "b")`) and `foreach` loop variables, each value checked. `$p += …` makes a known value unknown (it used to keep only the appended part).
+- Functions the command defines, or dot-sources from a workspace script, can be called; their bodies are judged as before.
+- A double-quoted `powershell -Command "…"` sees the outer variables; hashtable entries (`@{ K = 'v' }`) are judged as values, not commands; comments (`# …`, `<# … #>`) are not commands.
+- A call to a tool name of another agent host (`Bash`, `Read`, `ToolSearch`, `apply_patch`, …), which models trained on those hosts sometimes emit, is refused at once with the name to use here instead of waiting for an approver; the host has no such tool, so the call could only fail.
+- A route that renames tools (a gateway sent the model another host's tool names and did not map the calls back): after two such calls in a row the route is benched like any other deterministic route failure and the turn continues on the next healthy route of the chain; with none left the task ends as an error naming the route. The first such call of a session is logged (`route/foreign-tools`: the name and the argument names) as evidence for the gateway operator. Names are never mapped back by guesswork.
+- A `sandbox_permissions` request for exactly the mode the call already has (the host grants that without approval) no longer waits for an approver; the call is judged as if the field were absent, the audit log marks it, and the orchestrator gets one `gate/hint` per session. Any other value, or a mode the gate cannot read, still escalates.
+- A process polled with `while (-not $p.HasExited)` and killed on its deadline (`$p.Kill()`) counts as waited for.
+- A session whose task the plugin stopped (cancelled, needs input, needs attention, failed route) and that keeps calling tools has those calls refused for ten minutes, and its turn is stopped again.
+- Workers are told that a held call waits for its decision by itself, so a pending approval is no reason to end the turn.
+- `djy_routes_probe` sends one tool definition and the route's effort, like a worker request: routes that accept a bare prompt but reject tools no longer probe as healthy.
+- `cmd /c "set NAME=value&& program …"` sets a plain variable and runs the program as judged on its own; loader variables (`PATH`, …) follow `allowEnv`, `set /a` and `set /p` need approval, redirects are write targets.
+- `New-Object` of pure types (collections, `StringBuilder`, `IO.DriveInfo` for free disk space) is allowed; `-ComObject` and other types still need approval.
+- A task summary whose values contain braces (`"25 × {1,20} threads"`) was read as empty; the closing `}` is now found outside strings, and list values are joined.
+- A rule listed both in the profile config and in `local-rules.json` (e.g. the same `benchPatterns`) appears once in the effective rules.
+- `djy_ai_approval_set` replaces the judge models at run time: each new judge is probed first (nothing changes if one fails), the choice is kept in the plugin data dir across restarts, `judges: null` returns to the configured ones. Judges can differ per session (`judges` on `djy_session_create`, or `sessionId`), per batch (`batch`) and per folder (`workspaces[root].aiApproval.judges` in `local-rules.json`), so orchestrators working in different folders each use their own; the most specific applies. Changing a judge no longer needs a profile edit, which reloads the desktop and interrupts every running task.
+- `local-rules.json` gains `workspaceRoots`: extra roots that apply at once, without a desktop restart (one orchestrator can run workers in several project folders); a whole drive, the home directory or a folder containing the plugin data directory is refused. A session refused for its folder is told how to add a root.
+- `local-rules.json` gains `allowEnv` (e.g. prepend a known Python to `PATH`) and `allowPrograms` (a program outside the workspace by exact path, with argument and script constraints).
+- `working_directory` inside the roots, `exit`, `Add-Type -AssemblyName`, physical-memory reads via `ComputerInfo` are allowed.
+- Fix: positional data of `Set-Content`/`Add-Content`/`Out-File` (`Set-Content f.rs "//! stub"`) is no longer judged as a second write target.
+- From the independent review of these changes: `*>` (all streams) redirect targets are judged; `~` is the home directory (writes there are refused, `~user` paths need approval); after `cd`/`Set-Location`/`Push-Location` relative paths and `$PWD` are judged from every directory the shell may be in: only there after an unconditional `cd` into an existing directory, also the old one after a conditional (`&&`, `||`, inside a block) or possibly failing `cd` (an unresolvable target needs approval; this was wrong before 0.2 too); a `Start-Process` counts as waited only when its own `-PassThru` object is waited for in code, not in a string or comment; a function named like a built-in command (`function rm {…}`) needs approval; JWTs are masked in summaries and evidence.
+
+**From the sixth review round**
+- Git subcommands that create or overwrite work-tree files judge their operands like any write (roots, protected paths, the session's write scope): `worktree add/remove/move` paths, `init` directory, `checkout -- <paths>`, `restore`, `rm`, `mv`; a branch switch or stash is judged on the whole work tree (the nearest `.git` above), so a session sharing a repo with others needs approval for it; pathspec magic (`:/`) and globs need approval. `-C`, `--git-dir=`, `--work-tree=` are followed. Before, `git worktree add ../b/x` and `git checkout -- ../b/x` wrote into another session's scope (N1).
+- Judges chosen at session creation are evented and audited like every other judge change (S1); the health check, the periodic probe and the watchdog alert cover session, batch and folder judges too, so a dead session judge no longer sends its sessions to a human silently (S2).
+- Parallel benchmarks of one task keep the machine until the last one ends; the first result used to release it mid-run (F1).
+- The approval-timeout count (defer, then blocked) restarts only when an approver lists or decides approvals; plain event polling by a long-connected orchestrator used to make every timeout the first again (F2).
+- A judge switch probes the new judges in parallel, at most 60 s, so the reply arrives before the client gives up (N2).
+
+**The orchestrator is the first approver, its user the last**
+- The MCP server now sends instructions at connect: approvals of the connecting agent's workers come to it first (the AI judges hand it the ones they disagree on), so it keeps watching `djy_events_watch` instead of ending its turn after `djy_task_submit`; it decides only what it can judge with confidence and asks its user, with a recommendation, when unsure or for anything irreversible or outward-facing. `djy_task_submit` replies with the same reminder, `djy_task_get` lists the approvals its task waits for (`waitingForYou`), and `CONNECT.md` has a "Your role" section. Orchestrators that submitted and stopped left split approvals to time out.
+
+**Unattended approvals**
+- A call that times out is deferred the first time ("continue, submit once more near the end"), then listed as `BLOCKED-ON-APPROVAL` in the task's `blocked` list, and refused at once afterwards (`approval-unavailable`) instead of waiting out the timeout again and again. Any human or orchestrator decision, or any MCP call after the timeout, resets it.
+- A worker-supplied tool timeout excuses the stall alarm for at most an hour.
+
+**Orchestrator**
+- A note sent with `djy_approval_decide` after someone else (often the AI judges) settled the approval is delivered as a steer; the reply says who settled it.
+- Calls the AI judges settle unanimously no longer appear as `approval/pending` in the event stream (`approval/settled` carries `aiSettled: true`); a split is announced once, after the judges, with their opinions.
+
+**Bench and quiet mode**
+- `resources: ["bench"]` now holds the machine only while a benchmark command runs (it first waits for heavy commands of other sessions already running, and releases when its result arrives, or after 3 hours if the result never comes); `bench:task` is the old task-long lease; `bench:shared` may run benchmarks without holding anyone.
+- `djy_quiet_set` switches quiet mode on or off for a while (audited, expires on its own) instead of an edit of `local-rules.json`.
+
+**Evidence**
+- Each task records what the gate saw it run (calls let through, approved, refused; recent commands with exit codes; build/test/lint runs with the runner summary); `djy_task_get` returns it as `evidence`, `djy_task_list` shows the last checks.
+
+**Preflight**
+- The session's working directory itself is checked for the Low integrity label, not only its subdirectories; preflight has tests.
+
+**Internal**
+- `scripts/replay-approvals.mjs` replays recorded approvals against the current rules.
+- A test keeps the rule engine and admission controller free of host and orchestration imports.
+
 ## 0.1.1
 
 Lessons from running a mixed-model agent fleet for real: nothing may wait silently, the human approver needs context, and personal habits must be configurable without a release.

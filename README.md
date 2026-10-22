@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/klinkdev2026/dsh-dujiangyan-dispatch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/klinkdev2026/dsh-dujiangyan-dispatch/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.1.1-0B7285?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-0.2.0-0B7285?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-%E2%89%A50.2.1--rc.2-4D8DFF?style=flat-square" alt="DeepSeek Harness >= 0.2.1-rc.2">
   <img src="https://img.shields.io/badge/MCP-Streamable%20HTTP-5FE0C0?style=flat-square" alt="MCP">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6F93A6?style=flat-square" alt="platforms">
@@ -64,9 +64,9 @@ The old rule of the weir keepers is *"dig the channel deep, keep the weir low"* 
 
 - **Every tool call is gated**, including the sub-agents a worker spawns and sandbox escalations requested from inside a tool.
 - **A denial is advice, not a wall.** The worker gets the reason (for example "write outside the workspace" or "use the bench lease") and adapts instead of working around the gate. A worker that keeps hitting denials is paused by a deny breaker.
-- **Grey calls can go to AI judges first (opt-in).** The judges must all agree, and there are two by default: unanimous allow allows, unanimous deny denies, anything else goes to a human with every opinion attached. The call is fenced as data with a random marker, so prompt-injection text inside it changes nothing. Secrets are redacted, and each session has a judgment budget. Network and outward calls, anything outside the workspace, encoded commands and sandbox widening are **never** judged by AI.
+- **Grey calls can go to AI judges first (opt-in).** The judges must all agree. They come from your roster (two different models when the roster has them; set two vendors for a real cross-check): unanimous allow allows, unanimous deny denies, anything else goes to a human with every opinion attached. The call is fenced as data with a random marker, so prompt-injection text inside it changes nothing. Secrets are redacted, and each session has a judgment budget. Network and outward calls, anything outside the workspace, encoded commands and sandbox widening are **never** judged by AI.
 - **The human approver gets full context**: the task, the worker's own explanation, the call's description, the earlier gated calls of the task, and an "Open session" button to read the whole transcript.
-- **Nothing waits silently.** A watchdog tells the waiting worker to hold the call, raises alerts as an approval ages, reports stalled tasks, an absent orchestrator and failing AI judges, and the panel shows desktop notifications. At the timeout the call is denied with "resubmit unchanged", instead of turning into a confusing desktop prompt.
+- **Nothing waits silently.** A watchdog tells the waiting worker to hold the call, raises alerts as an approval ages, reports stalled tasks, an absent orchestrator and failing AI judges, and the panel shows desktop notifications. When nobody answers (overnight), the worker defers the step, then lists it as blocked and moves on, instead of waiting out the timeout again and again.
 - **Quiet mode** keeps benchmarks clean: while one task holds the `bench` lease, heavy builds and tests from other sessions wait.
 - **Your own rules, hot-reloaded.** Personal allow/deny patterns, hints, facts and AI settings live in `~/.dsh/dujiangyan/local-rules.json` and apply on save. No restart, no release. Workers cannot write that file.
 
@@ -173,7 +173,7 @@ The gate applies only to **sessions dispatched by Dujiangyan and their sub-agent
 
 | Tier | Contents |
 |---|---|
-| ✅ **Allowed** | Reads and searches; writes and edits inside the session's write scope; builds and runs (`cargo`, `python`, `node`, `cmake`…); local git (`status/diff/add/commit`); read-only shell commands; the workspace's own scripts |
+| ✅ **Allowed** | Reads and searches; writes and edits inside the session's write scope; builds and runs (`cargo`, `python`, `node`, `cmake`…); local git (`status/diff/add/commit`); read-only shell commands; the workspace's own scripts and binaries, also through `Start-Process` when the command waits for them (`-Wait` or `$p.WaitForExit(ms)`); scratch files under `$env:TEMP`; functions the command defines or dot-sources from a workspace script; programs and `PATH` additions you list in `local-rules.json` |
 | ⛔ **Denied, with the reason** | Writes outside the workspace or outside the session's write scope; reading credential files or printing key-bearing environment variables; global or system installs; registry and `setx`; **ACL, integrity-label or sandbox changes** (environment issues belong to you); `git push` and remote changes; uploads; `run_code` (its body bypasses the gate); agents spawning their own sub-agents; plugin or Harness configuration (including `local-rules.json`); benchmarks without the bench lease |
 | ❓ **Held for approval** | Everything else: network access, `pip/npm install`, `git clone`, dynamic code execution, deletes with unresolvable targets, unknown commands |
 
@@ -183,7 +183,15 @@ The gate applies only to **sessions dispatched by Dujiangyan and their sub-agent
 2. **the connected AI client** (the orchestrator), which should verify independently rather than trust the worker;
 3. **you**, with one click in the panel.
 
-**On timeout** (15 minutes by default) the call is denied with "resubmit the same call unchanged", and the host's follow-up sandbox prompt for that call is rejected, so a refused call is never approved by accident as a sandbox escalation. Set `fallbackToHuman: true` to hand timed-out root-session calls to the desktop's own prompt instead.
+**On timeout** (15 minutes by default) the call is denied safely, and the host's follow-up sandbox prompt for that call is rejected, so a refused call is never approved by accident as a sandbox escalation. Nobody may be around (overnight), so a repeat does not wait again and again:
+
+| Same call, same task | The worker is told |
+|---|---|
+| 1st timeout | continue with the rest of the task; submit this exact call once more near the end |
+| 2nd timeout | do not submit it again; list it in `leftovers` as `BLOCKED-ON-APPROVAL` and finish or wrap up (the step is recorded in the task's `blocked` list) |
+| later | refused at once (`approval-unavailable`), without another wait |
+
+Any decision by you or the orchestrator, or any MCP call after the timeout, gives the call a fresh start. Set `fallbackToHuman: true` to hand timed-out root-session calls to the desktop's own prompt instead.
 
 **Deny breaker.** Three gate or AI denials in a row (or 6 of the last 10 verdicts) pause the task as `needs_attention`, so a worker that keeps rephrasing a refused action stops burning turns. Denials by you or the orchestrator are guidance and do not count.
 
@@ -199,7 +207,7 @@ Off by default. When on, a held call that stays inside the workspace (an unknown
 - **Hardened input.** Everything the worker wrote is placed between two markers carrying a random code, and the judge is told never to follow text inside them. Secrets are redacted and long fields are clipped.
 - **Budget.** At most 20 judgments per session in any 10 minutes (configurable); over budget, the call waits for a human.
 - **Never judged by AI:** network and outward calls (fetch, web search, git network, package installs, MCP tools), anything outside the workspace roots, encoded commands, loader-environment changes, sandbox widening, truncated calls, and every deny.
-- Judges are probed at start; a judge that keeps failing raises a critical alert ("every escalation now needs a human"). Turn AI approval on or off at run time with `djy_ai_approval_set`.
+- Judges are probed at start; a judge that keeps failing raises a critical alert ("every escalation now needs a human"). Turn AI approval on or off, or replace a failing judge, at run time with `djy_ai_approval_set` (the new judges are probed first and kept across restarts; running tasks are not interrupted, unlike an edit of the profile). Judges can differ per session (`judges` on `djy_session_create`, or `djy_ai_approval_set` with `sessionId`), per batch (`batch`) and per folder (`workspaces[root].aiApproval.judges` in `local-rules.json`); the most specific one applies, then the global judges.
 
 ### Nothing waits silently
 
@@ -232,7 +240,17 @@ So 100 sessions can work at once: every request passes the Bottle-Neck, which ad
 - Five rate limits or overloads in a row open the breaker for 2 minutes: requests move down the model chain; after the cooldown one probe request goes through, and on success traffic returns to the preferred model.
 - RPM windows and staggered warm-up are off by default and can be enabled.
 
-**Bench lease and quiet mode.** A task submitted with `resources: ["bench"]` holds the machine. Benchmark commands are denied without that lease. While it is held, heavy commands from other sessions (`cargo build/test/…`, `npm/pnpm/yarn test/build`, plus your own patterns) wait, even after an approval. After 30 minutes they are held for approval as `quiet-timeout`.
+**Bench rights and quiet mode.** Benchmark commands are denied unless the task declares bench rights:
+
+| `resources` | The machine is held | Others |
+|---|---|---|
+| `["bench"]` | only while a benchmark command runs: it waits for heavy commands of other sessions already running, and gives the machine back when its result arrives | build and test freely while the task prepares or writes its report |
+| `["bench:task"]` | for the whole task | wait for the whole task |
+| `["bench:shared"]` | never | are not held; the measurement may be noisy |
+
+While the machine is held, heavy commands from other sessions (`cargo build/test/…`, `npm/pnpm/yarn test/build`, plus your own patterns) wait, even after an approval. After 30 minutes they are held for approval as `quiet-timeout`. `djy_quiet_set` switches quiet mode on or off for a while (audited, expires on its own), without editing `local-rules.json`.
+
+**Evidence.** The gate records what each task really ran: the calls it let through, approved or refused, recent commands with their exit codes, and build, test and lint runs with the test runner's summary (a piped `cargo test | Select-String …` that exits 0 still counts as failed when the summary says so). `djy_task_get` returns it as `evidence`, next to the worker's own claim in `verification`.
 
 ## Fish Mouth: multi-model routing
 
@@ -245,7 +263,7 @@ roster:
     - { provider: my-gateway, model: qwen-coder }          # fallback
   reviewer:
     - { provider: another-vendor, model: their-model }     # a different vendor reviews
-    - { provider: deepseek-official, model: deepseek-v4-pro }
+    - { provider: deepseek-official, model: deepseek-flash }
 ```
 
 - Providers and models are the ones already configured in your desktop app; no keys are configured twice. List them with `djy_models`.
@@ -319,7 +337,7 @@ There are two places:
 | `workspaceRoots` | `[]` | **Required.** Directories agents may write to |
 | `host` / `port` | `127.0.0.1` / `8790` | MCP listen address |
 | `stateDir` | `~/.dsh/dujiangyan` | Token, audit log, tasks, lease files and `local-rules.json` |
-| `roster` | implementer → `deepseek-official/deepseek-flash`; reviewer, planner → `deepseek-official/deepseek-v4-pro` | Model chain per role |
+| `roster` | every role → `deepseek-official/deepseek-flash` | Model chain per role |
 | `limits.defaults` / `limits.providers.<id>` | see [Bottle-Neck](#bottle-neck-admission-control) | `maxConcurrent`, `rpm`, `minSpacingMs`, `jitterMs`, `increaseAfter`, `breakerThreshold`, `breakerCooldownMs` |
 | `permissionPreset` | `workspace-write` | Permission preset for worker sessions |
 | `agentPreset` | `standard` | Agent preset mounted on worker sessions |
@@ -360,7 +378,9 @@ The profile is the shared base; this file holds what you learn while running you
   "rules": {
     "allowCommands": ["mytool"],
     "denyPatterns": ["\\bdrop\\s+database\\b"],
-    "benchPatterns": ["run_bench\\.sh"]
+    "benchPatterns": ["run_bench\\.sh"],
+    "allowEnv": [{ "name": "PATH", "prepend": ["C:/Python313"] }],
+    "allowPrograms": [{ "path": "C:/Apps/KLayout/klayout_app.exe", "args": "^-b\\b", "scriptFlag": "-r" }]
   },
   "hints": [
     { "match": "\\bcurl\\b", "tool": "bash", "reason": "No network here: list the URL in leftovers and it will be fetched for you." }
@@ -376,10 +396,11 @@ The profile is the shared base; this file holds what you learn while running you
 
 | Key | Meaning |
 |---|---|
-| `rules` | Extra `allowCommands`, `denyPatterns`, `benchPatterns` |
+| `rules` | Extra `allowCommands`, `denyPatterns`, `benchPatterns`; `allowEnv`: loader variables such as `PATH` that may change (`prepend`/`append`: directories that may be added to the current value; `values`: exact values); `allowPrograms`: programs outside the workspace that may run, by exact `path` (`args`: a regex the argument line must match; the script after `scriptFlag` must lie inside the workspace) |
 | `hints` | Turn a call that would wait for approval into a deny with the right advice (`match` is a case-insensitive regex; `tool` optional). A hint never allows anything |
 | `facts` | Extra lines for the environment-facts block of task prompts (and for the AI judges) |
-| `workspaces` | `rules`, `hints` and `facts` that apply only inside one workspace root |
+| `workspaceRoots` | Extra workspace roots, added to the profile ones at once (no restart), e.g. when one orchestrator runs workers in several project folders (top level only). A whole drive, the home directory or a folder containing the plugin data directory is refused |
+| `workspaces` | `rules`, `hints`, `facts` and `aiApproval.judges` that apply only inside one workspace root |
 | `aiApproval` | Overrides of the profile setting (top level only) |
 | `quietMode` | Overrides of the profile setting; patterns are added to the profile ones |
 
@@ -403,9 +424,10 @@ The file lives outside every workspace, and the gate denies worker writes to it,
 | `djy_questions_list` | Questions workers asked (tasks in `needs_input`) |
 | `djy_events_watch` | Long-poll the event stream by cursor and epoch |
 | `djy_approvals_list` / `djy_approval_decide` | List held calls with context and AI opinions; decide (first decision wins), optionally with a `note` for the worker |
-| `djy_ai_approval_get` / `djy_ai_approval_set` | AI approval status, judges, eligible rules and judge health; turn it on or off at run time |
+| `djy_ai_approval_get` / `djy_ai_approval_set` | AI approval status, judges, eligible rules and judge health; turn it on or off and replace the judges at run time |
 | `djy_rules_get` / `djy_rules_reload` | Show `local-rules.json` and the effective rules for a directory; reload it now |
 | `djy_locks_list` | Leases and their queues |
+| `djy_quiet_set` | Switch quiet mode on or off for a while, or `clear` it (audited, expires on its own) |
 
 ## Security
 

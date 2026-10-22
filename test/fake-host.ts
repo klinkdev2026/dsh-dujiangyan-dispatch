@@ -12,8 +12,12 @@ export interface ScriptStep {
   readonly args: Record<string, unknown>
   /** Instead of a tool call: ask the user these questions through the agent-scoped waterfall. */
   readonly ask?: ReadonlyArray<{ id: string; question: string; options?: Array<{ label: string }> }>
+  /** End the turn here as the host does when a reply hits the output-token ceiling. */
+  readonly cutOff?: boolean
   /** Pause this long before the step (lets a test act while the turn runs). */
   readonly waitMs?: number
+  /** The tool's final result, emitted on `tools/result` when the call is allowed (default: success, exit 0). */
+  readonly result?: unknown
   /** Assistant text the worker emits before this call (its narration). */
   readonly say?: string
 }
@@ -45,6 +49,7 @@ export class FakeHost {
     get: name => {
       if (name === 'permissionPresets') return { set: (s: HostSession, p: string) => this.presets.set(s.id, p), current: (s: HostSession) => this.presets.get(s.id) ?? 'workspace-write' }
       if (name === 'agentPresets') return { mount: async () => ({}) }
+      if (name === 'sandboxPolicy') return { resolve: (r: { session?: HostSession }) => ({ mode: r.session === undefined ? undefined : this.presets.get(r.session.id) ?? 'workspace-write' }) }
       if (name === 'approval') return { overrideOf: (s: HostSession) => (this.agentsById.get(s.id)?.session.header.parentSession !== undefined ? 'never' : 'ask') }
       return undefined
     },
@@ -151,8 +156,12 @@ export class FakeHost {
   }
 
   /** Run one tool call through the pre-execute chain, as the tools registry does. */
-  async preExecute(agent: HostAgent, tool: string, args: Record<string, unknown>, signal = new AbortController().signal): Promise<PreToolDecision> {
-    return this.waterfall<PreToolDecision>('tools/pre-execute', [{ callId: `c${Math.random()}`, name: tool, arguments: args, agent, signal }], async () => ({ kind: 'allow' }))
+  async preExecute(agent: HostAgent, tool: string, args: Record<string, unknown>, signal = new AbortController().signal, result?: unknown): Promise<PreToolDecision> {
+    const exec = { callId: `c${Math.random()}`, name: tool, arguments: args, agent, signal }
+    const decision = await this.waterfall<PreToolDecision>('tools/pre-execute', [exec], async () => ({ kind: 'allow' }))
+    // Like the tools registry: the frozen final outcome of a call that ran goes to `tools/result`.
+    if (decision.kind === 'allow' && result !== undefined) this.emit('tools/result', exec, result)
+    return decision
   }
 
   /** Raise a host `approval/request` (a sandbox escalation or a desktop ask), as the tool runtime does. */
@@ -258,6 +267,10 @@ export class FakeAgent implements HostAgent {
           this.host.emit('agent/error', { agent: this, error: new Error('turn aborted') })
           return
         }
+        if (step.cutOff === true) {
+          this.host.emit('session/event', this.session, { type: 'turn/end', data: { reason: { kind: 'max-tokens' } } })
+          return
+        }
         if (step.ask !== undefined) {
           const asker = this.agentListeners.get('user-questions/request')?.[0]
           try {
@@ -272,7 +285,7 @@ export class FakeAgent implements HostAgent {
           this.host.emit('session/event', this.session, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: step.say }] } } })
         }
         this.host.emit('session/event', this.session, { type: 'tool/call', data: { name: step.tool, arguments: JSON.stringify(step.args) } })
-        const decision = await this.host.preExecute(this, step.tool, step.args, this.turnAbort.signal)
+        const decision = await this.host.preExecute(this, step.tool, step.args, this.turnAbort.signal, step.result ?? { isError: false, value: { exitCode: 0 }, content: [{ type: 'text', text: 'ok' }] })
         this.decisions.push({ tool: step.tool, decision })
         if (this.cancelled) {
           this.host.emit('agent/error', { agent: this, error: new Error('turn aborted') })

@@ -10,9 +10,17 @@ export interface Hint {
     readonly reason: string;
 }
 export interface RuleLayer {
-    readonly rules?: Pick<RuleConfig, 'allowCommands' | 'denyPatterns' | 'benchPatterns'>;
+    readonly rules?: Pick<RuleConfig, 'allowCommands' | 'denyPatterns' | 'benchPatterns' | 'allowEnv' | 'allowPrograms'>;
     readonly hints?: readonly Hint[];
     readonly facts?: readonly string[];
+    /** In a `workspaces` layer only: the AI judges of sessions working in that folder. */
+    readonly aiApproval?: {
+        readonly judges?: ReadonlyArray<{
+            provider: string;
+            model: string;
+            effort?: string;
+        }>;
+    };
 }
 export interface LocalRulesFile extends RuleLayer {
     /** Layers applied only to sessions whose working directory is inside the given root. */
@@ -33,6 +41,8 @@ export interface LocalRulesFile extends RuleLayer {
         readonly enabled?: boolean;
         readonly patterns?: readonly string[];
     };
+    /** Extra workspace roots (top level only), added to the profile ones without a desktop restart. */
+    readonly workspaceRoots?: readonly string[];
 }
 export interface EffectiveRules {
     readonly rules: RuleConfig;
@@ -73,11 +83,13 @@ export declare class LocalRules {
     private readonly events;
     private readonly audit;
     private readonly base;
+    private readonly home;
     constructor(deps: {
         stateDir: string;
         events: EventLog;
         audit: (record: Record<string, unknown>) => void;
         base: () => RuleConfig;
+        home?: string;
     });
     /** Re-read the file. A missing file means no personal rules; an invalid one keeps the last good version. */
     reload(): {
@@ -94,6 +106,19 @@ export declare class LocalRules {
     /** The layers that apply to a working directory: the top level, then each workspace root that contains it. */
     layersFor(cwd: string | undefined, platform?: NodeJS.Platform): RuleLayer[];
     effective(cwd: string | undefined, platform?: NodeJS.Platform): EffectiveRules;
+    /** The file's extra workspace roots, canonical. */
+    workspaceRoots(platform?: NodeJS.Platform): string[];
+    /**
+     * A root that would put the home directory or the plugin data directory (rules, token) inside
+     * the workers' reach; the gate also protects them, but such a root is never what was meant.
+     */
+    private unsafeRoot;
+    /** The judges of the most specific workspace layer containing `cwd` that names judges, if any. */
+    workspaceJudges(cwd: string, platform?: NodeJS.Platform): ReadonlyArray<{
+        provider: string;
+        model: string;
+        effort?: string;
+    }> | undefined;
     /** The file's `aiApproval` overrides, if any. */
     aiApproval(): LocalRulesFile['aiApproval'];
     /** The file's `quietMode` overrides, if any. */

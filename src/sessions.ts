@@ -4,6 +4,7 @@
  * dispatch roots so the gate guards them and everything they spawn.
  */
 import { randomUUID } from 'node:crypto'
+import path from 'node:path'
 import type { ResolvedConfig, RouteEntry } from './config.ts'
 import type { EventLog } from './events.ts'
 import type {
@@ -94,8 +95,9 @@ export class SessionManager {
   async create(input: CreateSessionInput): Promise<CreateSessionResult> {
     const cwd = canonicalPath(input.cwd)
     const roots = this.config.workspaceRoots
-    if (roots.length === 0) return { ok: false, error: 'no workspaceRoots configured; set them in the dujiangyan-dispatch profile row' }
-    if (!isWithinAny(roots, cwd)) return { ok: false, error: `cwd ${cwd} is outside the workspace roots (${roots.join(', ')})` }
+    const howToAdd = `the user can add a root to "workspaceRoots" in ${path.join(this.config.stateDir, 'local-rules.json')} (applies at once, no restart) or to the profile row`
+    if (roots.length === 0) return { ok: false, error: `no workspace roots configured; ${howToAdd}` }
+    if (!isWithinAny(roots, cwd)) return { ok: false, error: `cwd ${cwd} is outside the workspace roots (${roots.join(', ')}); ${howToAdd}` }
     if (this.config.maxSessions > 0 && this.registry.size >= this.config.maxSessions) {
       return { ok: false, error: `maxSessions (${this.config.maxSessions}) reached; reuse an existing session (djy_session_list) or close one` }
     }

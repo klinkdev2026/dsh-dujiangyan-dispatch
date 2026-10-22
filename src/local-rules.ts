@@ -13,6 +13,7 @@
  * rules.
  */
 import { existsSync, readFileSync, watch, type FSWatcher } from 'node:fs'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import type { EventLog } from './events.ts'
 import { canonicalPath, isWithinAny } from './paths.ts'
@@ -30,9 +31,11 @@ export interface Hint {
 }
 
 export interface RuleLayer {
-  readonly rules?: Pick<RuleConfig, 'allowCommands' | 'denyPatterns' | 'benchPatterns'>
+  readonly rules?: Pick<RuleConfig, 'allowCommands' | 'denyPatterns' | 'benchPatterns' | 'allowEnv' | 'allowPrograms'>
   readonly hints?: readonly Hint[]
   readonly facts?: readonly string[]
+  /** In a `workspaces` layer only: the AI judges of sessions working in that folder. */
+  readonly aiApproval?: { readonly judges?: ReadonlyArray<{ provider: string; model: string; effort?: string }> }
 }
 
 export interface LocalRulesFile extends RuleLayer {
@@ -42,6 +45,8 @@ export interface LocalRulesFile extends RuleLayer {
   readonly aiApproval?: { readonly enabled?: boolean; readonly judges?: ReadonlyArray<{ provider: string; model: string; effort?: string }>; readonly timeoutMs?: number; readonly maxPerSessionPer10Min?: number }
   /** Overrides of the profile `quietMode` setting (top level only); patterns are added to the profile ones. */
   readonly quietMode?: { readonly enabled?: boolean; readonly patterns?: readonly string[] }
+  /** Extra workspace roots (top level only), added to the profile ones without a desktop restart. */
+  readonly workspaceRoots?: readonly string[]
 }
 
 export interface EffectiveRules {
@@ -51,10 +56,18 @@ export interface EffectiveRules {
 }
 
 const LAYER_KEYS = new Set(['rules', 'hints', 'facts'])
-const RULE_KEYS = new Set(['allowCommands', 'denyPatterns', 'benchPatterns'])
-const TOP_KEYS = new Set(['workspaces', 'aiApproval', 'quietMode'])
+const RULE_KEYS = new Set(['allowCommands', 'denyPatterns', 'benchPatterns', 'allowEnv', 'allowPrograms'])
+const TOP_KEYS = new Set(['workspaces', 'aiApproval', 'quietMode', 'workspaceRoots'])
 
 function checkTop(v: Record<string, unknown>): string | undefined {
+  const roots = v['workspaceRoots']
+  if (roots !== undefined) {
+    if (!isStringList(roots)) return 'local-rules.workspaceRoots: expected an array of absolute paths'
+    for (const r of roots) {
+      if (!/^([A-Za-z]:[\\/]|\/)/.test(r)) return `local-rules.workspaceRoots: ${JSON.stringify(r)} is not an absolute path`
+      if (/^([A-Za-z]:)?[\\/]*$/.test(r)) return `local-rules.workspaceRoots: ${JSON.stringify(r)} is a whole drive; give a project folder`
+    }
+  }
   const ai = v['aiApproval']
   if (ai !== undefined) {
     if (ai === null || typeof ai !== 'object' || Array.isArray(ai)) return 'local-rules.aiApproval: expected an object'
@@ -91,14 +104,25 @@ function checkTop(v: Record<string, unknown>): string | undefined {
 function checkLayer(value: unknown, where: string, allowWorkspaces: boolean): string | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return `${where}: expected an object`
   for (const key of Object.keys(value)) {
-    if (!LAYER_KEYS.has(key) && !(allowWorkspaces && TOP_KEYS.has(key)) && key !== '$comment') return `${where}: unknown key "${key}"`
+    if (!LAYER_KEYS.has(key) && !(allowWorkspaces && TOP_KEYS.has(key)) && !(!allowWorkspaces && key === 'aiApproval') && key !== '$comment') return `${where}: unknown key "${key}"`
   }
   const v = value as Record<string, unknown>
+  if (!allowWorkspaces && v['aiApproval'] !== undefined) {
+    const a = v['aiApproval'] as Record<string, unknown> | null
+    if (a === null || typeof a !== 'object' || Array.isArray(a)) return `${where}.aiApproval: expected an object`
+    for (const key of Object.keys(a)) if (key !== 'judges' && key !== '$comment') return `${where}.aiApproval: only "judges" can differ per workspace ("${key}")`
+    if (a['judges'] !== undefined && !(Array.isArray(a['judges']) && a['judges'].length > 0 && a['judges'].every(isJudgeShape))) return `${where}.aiApproval.judges: expected a non-empty array of { provider, model, effort? }`
+  }
   if (v['rules'] !== undefined) {
     const r = v['rules']
     if (r === null || typeof r !== 'object' || Array.isArray(r)) return `${where}.rules: expected an object`
     for (const [key, list] of Object.entries(r)) {
       if (!RULE_KEYS.has(key)) return `${where}.rules: unknown key "${key}"`
+      if (key === 'allowEnv' || key === 'allowPrograms') {
+        const bad = key === 'allowEnv' ? checkAllowEnv(list) : checkAllowPrograms(list)
+        if (bad !== undefined) return `${where}.rules.${key}${bad}`
+        continue
+      }
       if (!Array.isArray(list) || !list.every(s => typeof s === 'string')) return `${where}.rules.${key}: expected an array of strings`
       if (key !== 'allowCommands') {
         for (const s of list as string[]) {
@@ -121,6 +145,47 @@ function checkLayer(value: unknown, where: string, allowWorkspaces: boolean): st
     }
   }
   if (v['facts'] !== undefined && !(Array.isArray(v['facts']) && v['facts'].every(s => typeof s === 'string'))) return `${where}.facts: expected an array of strings`
+  return undefined
+}
+
+const isJudgeShape = (x: unknown): boolean => {
+  const o = x as Record<string, unknown> | null
+  return o !== null && typeof o === 'object' && typeof o['provider'] === 'string' && typeof o['model'] === 'string' && (o['effort'] === undefined || typeof o['effort'] === 'string')
+}
+
+const isStringList = (v: unknown): v is string[] => Array.isArray(v) && v.every(s => typeof s === 'string' && s !== '')
+
+/** `[{ name, prepend?, append?, values? }]`; returns an error suffix or undefined. */
+function checkAllowEnv(list: unknown): string | undefined {
+  if (!Array.isArray(list)) return ': expected an array of { name, prepend?, append?, values? }'
+  for (const [i, e] of list.entries()) {
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) return `[${i}]: expected an object`
+    const o = e as Record<string, unknown>
+    for (const key of Object.keys(o)) if (!['name', 'prepend', 'append', 'values', '$comment'].includes(key)) return `[${i}]: unknown key "${key}"`
+    if (typeof o['name'] !== 'string' || !/^[A-Za-z_]\w*$/.test(o['name'])) return `[${i}].name: expected an environment variable name`
+    for (const key of ['prepend', 'append', 'values']) {
+      if (o[key] !== undefined && !isStringList(o[key])) return `[${i}].${key}: expected an array of non-empty strings`
+    }
+    if (o['prepend'] === undefined && o['append'] === undefined && o['values'] === undefined) return `[${i}]: give prepend, append or values`
+  }
+  return undefined
+}
+
+/** `[{ path, args?, scriptFlag? }]`; returns an error suffix or undefined. */
+function checkAllowPrograms(list: unknown): string | undefined {
+  if (!Array.isArray(list)) return ': expected an array of { path, args?, scriptFlag? }'
+  for (const [i, e] of list.entries()) {
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) return `[${i}]: expected an object`
+    const o = e as Record<string, unknown>
+    for (const key of Object.keys(o)) if (!['path', 'args', 'scriptFlag', '$comment'].includes(key)) return `[${i}]: unknown key "${key}"`
+    if (typeof o['path'] !== 'string' || !/^([A-Za-z]:[\\/]|\/)/.test(o['path'])) return `[${i}].path: expected an absolute path`
+    if (o['args'] !== undefined) {
+      if (typeof o['args'] !== 'string') return `[${i}].args: expected a regular expression string`
+      const bad = badRegex(o['args'])
+      if (bad !== undefined) return `[${i}].args: invalid regular expression: ${bad}`
+    }
+    if (o['scriptFlag'] !== undefined && (typeof o['scriptFlag'] !== 'string' || !/^-/.test(o['scriptFlag']))) return `[${i}].scriptFlag: expected a flag such as "-r"`
+  }
   return undefined
 }
 
@@ -153,8 +218,17 @@ export function parseLocalRules(text: string): { ok: true; value: LocalRulesFile
   return { ok: true, value: value as LocalRulesFile }
 }
 
-const concat = (a: readonly string[] | undefined, b: readonly string[] | undefined) =>
-  a === undefined && b === undefined ? undefined : [...a ?? [], ...b ?? []]
+/** Both lists, in order, without exact repeats (the same pattern is often in the profile config and the file). */
+function concat<T>(a: readonly T[] | undefined, b: readonly T[] | undefined): T[] | undefined {
+  if (a === undefined && b === undefined) return undefined
+  const seen = new Set<string>()
+  return [...a ?? [], ...b ?? []].filter(x => {
+    const key = JSON.stringify(x)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
 
 /** The base rule config with every layer's patterns appended (layers only add; they never remove a base rule). */
 export function mergeRules(base: RuleConfig, layers: readonly RuleLayer[]): RuleConfig {
@@ -165,8 +239,12 @@ export function mergeRules(base: RuleConfig, layers: readonly RuleLayer[]): Rule
     const allowCommands = concat(out.allowCommands, r.allowCommands)
     const denyPatterns = concat(out.denyPatterns, r.denyPatterns)
     const benchPatterns = concat(out.benchPatterns, r.benchPatterns)
+    const allowEnv = concat(out.allowEnv, r.allowEnv)
+    const allowPrograms = concat(out.allowPrograms, r.allowPrograms)
     out = {
       ...out,
+      ...allowEnv !== undefined ? { allowEnv } : {},
+      ...allowPrograms !== undefined ? { allowPrograms } : {},
       ...allowCommands !== undefined ? { allowCommands } : {},
       ...denyPatterns !== undefined ? { denyPatterns } : {},
       ...benchPatterns !== undefined ? { benchPatterns } : {},
@@ -197,8 +275,11 @@ export class LocalRules {
   private readonly audit: (record: Record<string, unknown>) => void
   private readonly base: () => RuleConfig
 
-  constructor(deps: { stateDir: string; events: EventLog; audit: (record: Record<string, unknown>) => void; base: () => RuleConfig }) {
+  private readonly home: string
+
+  constructor(deps: { stateDir: string; events: EventLog; audit: (record: Record<string, unknown>) => void; base: () => RuleConfig; home?: string }) {
     this.file = path.join(deps.stateDir, LOCAL_RULES_FILE)
+    this.home = deps.home ?? homedir()
     this.events = deps.events
     this.audit = deps.audit
     this.base = deps.base
@@ -223,6 +304,8 @@ export class LocalRules {
     }
     const parsed = parseLocalRules(text.replace(/^﻿/, ''))
     if (!parsed.ok) return this.invalid(parsed.error)
+    const unsafe = this.unsafeRoot(parsed.value.workspaceRoots ?? [])
+    if (unsafe !== undefined) return this.invalid(unsafe)
     this.current = parsed.value
     this.present = true
     this.loadedAt = new Date().toISOString()
@@ -292,6 +375,37 @@ export class LocalRules {
     }
   }
 
+  /** The file's extra workspace roots, canonical. */
+  workspaceRoots(platform: NodeJS.Platform = process.platform): string[] {
+    return (this.current.workspaceRoots ?? []).map(r => canonicalPath(r, platform))
+  }
+
+  /**
+   * A root that would put the home directory or the plugin data directory (rules, token) inside
+   * the workers' reach; the gate also protects them, but such a root is never what was meant.
+   */
+  private unsafeRoot(roots: readonly string[], platform: NodeJS.Platform = process.platform): string | undefined {
+    const guarded = [this.home, path.dirname(this.file)].map(p => canonicalPath(p, platform))
+    const dataDir = guarded[1] as string
+    for (const r of roots) {
+      const root = canonicalPath(r, platform)
+      if (guarded.some(g => isWithinAny([root], g, platform)) || isWithinAny([dataDir], root, platform)) return `local-rules.workspaceRoots: ${JSON.stringify(r)} contains the home or plugin data directory; give a project folder`
+    }
+    return undefined
+  }
+
+  /** The judges of the most specific workspace layer containing `cwd` that names judges, if any. */
+  workspaceJudges(cwd: string, platform: NodeJS.Platform = process.platform): ReadonlyArray<{ provider: string; model: string; effort?: string }> | undefined {
+    let best: { len: number; judges: ReadonlyArray<{ provider: string; model: string; effort?: string }> } | undefined
+    for (const [root, layer] of Object.entries(this.current.workspaces ?? {})) {
+      const judges = layer.aiApproval?.judges
+      if (judges === undefined) continue
+      const r = canonicalPath(root, platform)
+      if (isWithinAny([r], canonicalPath(cwd, platform), platform) && (best === undefined || r.length > best.len)) best = { len: r.length, judges }
+    }
+    return best?.judges
+  }
+
   /** The file's `aiApproval` overrides, if any. */
   aiApproval(): LocalRulesFile['aiApproval'] {
     return this.current.aiApproval
@@ -320,6 +434,7 @@ function counts(f: LocalRulesFile): Record<string, number> {
   const n = (pick: (l: RuleLayer) => readonly unknown[] | undefined) => layers.reduce((s, l) => s + (pick(l)?.length ?? 0), 0)
   return {
     workspaces: Object.keys(f.workspaces ?? {}).length,
+    workspaceRoots: f.workspaceRoots?.length ?? 0,
     allowCommands: n(l => l.rules?.allowCommands),
     denyPatterns: n(l => l.rules?.denyPatterns),
     benchPatterns: n(l => l.rules?.benchPatterns),

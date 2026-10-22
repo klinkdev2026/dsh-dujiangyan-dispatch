@@ -8,6 +8,7 @@
  * user opens by hand in the desktop UI are never touched.
  */
 import path from 'node:path'
+import type { Judge } from './ai-approval.ts'
 import type { RouteEntry } from './config.ts'
 import type { HostAgent, HostContext, HostSession, SessionsService } from './host.ts'
 import { optional } from './host.ts'
@@ -26,6 +27,8 @@ export interface DispatchedSession {
   readonly writeScope?: readonly string[]
   /** The route chain; requests use its first healthy entry. */
   readonly chain: readonly RouteEntry[]
+  /** AI approval judges of this session (set at create or by `djy_ai_approval_set`); absent = folder or global judges. */
+  judges?: readonly Judge[]
   readonly createdAt: string
   closedAt?: string
 }
@@ -63,6 +66,16 @@ export class DispatchRegistry {
     this.closed.push(rec)
     this.rootOfCache.clear()
     this.persist()
+  }
+
+  /** Give a session its own AI judges, or (`undefined`) return it to the folder or global ones. */
+  setJudges(sessionId: string, judges: readonly Judge[] | undefined): boolean {
+    const rec = this.roots.get(sessionId)
+    if (rec === undefined) return false
+    if (judges === undefined) delete rec.judges
+    else rec.judges = judges
+    this.persist()
+    return true
   }
 
   get(sessionId: string): DispatchedSession | undefined {

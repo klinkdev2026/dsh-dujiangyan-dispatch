@@ -1,3 +1,16 @@
+/**
+ * 宝瓶口 + 鱼嘴 wired into the host's model calls.
+ *
+ * - `llm/stream` (宝瓶口): every streaming model call in the process — the
+ *   user's own sessions included, since a provider's rate limit is shared —
+ *   takes an admission lease first and returns it with the call's outcome.
+ *   Harness' own retry layer re-runs failed steps through this same hook, so
+ *   retries are admitted and spaced like first attempts.
+ * - `agent/request` (鱼嘴): for dispatched sessions with a route chain, a
+ *   request whose provider's circuit is open is diverted to the first healthy
+ *   route, and returns to the preferred route once its circuit closes.
+ */
+import type { RouteEntry } from './config.ts';
 import type { EventLog } from './events.ts';
 import type { HostContext } from './host.ts';
 import { type AdmissionController } from './limiter.ts';
@@ -71,11 +84,18 @@ export declare function installLlmHooks(ctx: HostContext, deps: {
     registry: DispatchRegistry;
     events: EventLog;
     health: RouteHealth;
-}): void;
+}): {
+    routeOf(sessionId: string): {
+        provider: string;
+        model: string;
+    } | undefined;
+    healthy(e: RouteEntry): boolean;
+};
 /** Probe routes with one tiny real request each; records health and benches deterministic failures. */
 export declare function probeRoutes(ctx: HostContext, health: RouteHealth, routes: ReadonlyArray<{
     provider: string;
     model: string;
+    effort?: string;
 }>, timeoutMs?: number): Promise<Array<{
     route: string;
     ok: boolean;

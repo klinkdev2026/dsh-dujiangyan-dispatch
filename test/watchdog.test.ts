@@ -151,7 +151,7 @@ test('probeJudges asks each judge the fixed health question', async () => {
   assert.equal(byJudge['relay/judge-a'], 'error')
 })
 
-test('safe timeout: the worker is told to resubmit unchanged, and the host re-ask about it is rejected, never queued', async t => {
+test('safe timeout: the worker is told to defer the step, and the host re-ask about it is rejected, never queued', async t => {
   const dir = mkdtempSync(path.join(tmpdir(), 'djy-wd-gate-'))
   const ws = path.join(dir, 'ws')
   mkdirSync(ws, { recursive: true })
@@ -167,7 +167,7 @@ test('safe timeout: the worker is told to resubmit unchanged, and the host re-as
   t.after(() => clearInterval(keepAlive))
   const d = await host.preExecute(agent, 'pwsh', { command: 'frobnicate --x' })
   assert.equal(d.kind, 'deny')
-  assert.match((d as { reason: string }).reason, /approval-timeout.*resubmit the same call unchanged/)
+  assert.match((d as { reason: string }).reason, /approval-timeout.*submit this exact call once more near the end/)
   // The host follows up about the same call: rejected at once, nothing new is queued.
   assert.equal(await host.approvalRequest(agent, 'pwsh', 'dujiangyan: no approver answered within 15 min'), 'rejected')
   assert.equal(approvals.list().length, 0)
@@ -180,4 +180,52 @@ test('safe timeout: the worker is told to resubmit unchanged, and the host re-as
   assert.match(p?.danger ?? '', /OUTSIDE the sandbox/)
   approvals.decide(p?.id ?? '', 'deny', 'no', 'human')
   assert.equal(await genuine, 'rejected')
+})
+
+test('unattended timeouts: defer once, then mark blocked, then refuse at once; an approver coming back resets it', async t => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'djy-wd-night-'))
+  const ws = path.join(dir, 'ws')
+  mkdirSync(ws, { recursive: true })
+  const host = new FakeHost()
+  const config = resolveConfig({ stateDir: path.join(dir, 'state'), workspaceRoots: [ws], approvalTimeoutMs: 30 })
+  const events = new EventLog(undefined)
+  const approvals = new ApprovalQueue(events, () => {})
+  const registry = { rootOf: () => 'root', get: () => ({ cwd: ws }) } as never
+  const blocked: Array<{ taskId: string | undefined; rule: string; fingerprint: string }> = []
+  let seen: number | undefined
+  installGate(host.ctx, {
+    config, registry, approvals, events, audit: () => {}, heldResources: () => [], runningTask: () => 't1',
+    approverSeen: () => seen,
+    onBlocked: (_root, taskId, step) => { blocked.push({ taskId, rule: step.rule, fingerprint: step.fingerprint }) },
+  })
+  const agent = new FakeAgent(host, 'root', ws, undefined, {})
+  const keepAlive = setInterval(() => {}, 1000)
+  t.after(() => clearInterval(keepAlive))
+  const call = () => host.preExecute(agent, 'pwsh', { command: 'frobnicate --night' }) as Promise<{ kind: string; reason?: string }>
+
+  const first = await call()
+  assert.match(first.reason ?? '', /approval-timeout.*once more near the end/)
+  assert.equal(blocked.length, 0)
+  const second = await call()
+  assert.match(second.reason ?? '', /approval-timeout.*BLOCKED-ON-APPROVAL/)
+  assert.equal(blocked.length, 1)
+  assert.equal(blocked[0]?.taskId, 't1')
+  // Third time: refused at once, nothing is queued for another full timeout.
+  const third = call()
+  await sleep(1)
+  assert.equal(approvals.list().length, 0)
+  assert.match((await third).reason ?? '', /approval-unavailable.*do not submit it again/)
+  assert.equal(blocked.length, 2)
+  assert.equal(blocked[1]?.fingerprint, blocked[0]?.fingerprint)
+  assert.ok(types(events).includes('approval/unavailable'))
+  // A different call still gets its own first chance.
+  assert.match((await host.preExecute(agent, 'pwsh', { command: 'frobnicate --other' }) as { reason: string }).reason, /once more near the end/)
+
+  // The orchestrator calls in again (MCP activity after the timeouts): the same call is asked again.
+  seen = Date.now() + 1
+  const again = call()
+  for (let i = 0; i < 50 && approvals.list().length === 0; i++) await sleep(2)
+  assert.equal(approvals.list().length, 1)
+  approvals.decide(approvals.list()[0]?.id ?? '', 'allow', 'ok', 'orchestrator')
+  assert.equal((await again).kind, 'allow')
 })

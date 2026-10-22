@@ -17,7 +17,7 @@ export interface Config {
     approvalTimeoutMs?: number;
     /**
      * When an approval times out, hand root sessions to the desktop's own approval prompt instead of
-     * denying. Off by default: a timed-out call is denied with "resubmit unchanged", because the
+     * denying. Off by default: a timed-out call is denied safely (defer, then blocked), because the
      * desktop prompt that followed looked like (and was approved as) a sandbox escalation.
      */
     fallbackToHuman?: boolean;

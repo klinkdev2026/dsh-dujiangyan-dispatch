@@ -25,7 +25,7 @@ export interface Config {
   approvalTimeoutMs?: number
   /**
    * When an approval times out, hand root sessions to the desktop's own approval prompt instead of
-   * denying. Off by default: a timed-out call is denied with "resubmit unchanged", because the
+   * denying. Off by default: a timed-out call is denied safely (defer, then blocked), because the
    * desktop prompt that followed looked like (and was approved as) a sandbox escalation.
    */
   fallbackToHuman?: boolean
@@ -100,8 +100,8 @@ const PERSONAL_SCALE_LIMIT: Partial<ProviderLimit> = { rpm: 0, minSpacingMs: 150
 
 export const DEFAULT_ROSTER: Readonly<Record<string, readonly RouteEntry[]>> = {
   implementer: [{ provider: 'deepseek-official', model: 'deepseek-flash' }],
-  reviewer: [{ provider: 'deepseek-official', model: 'deepseek-v4-pro' }],
-  planner: [{ provider: 'deepseek-official', model: 'deepseek-v4-pro' }],
+  reviewer: [{ provider: 'deepseek-official', model: 'deepseek-flash' }],
+  planner: [{ provider: 'deepseek-official', model: 'deepseek-flash' }],
 }
 
 export function resolveConfig(config: Config = {}): ResolvedConfig {

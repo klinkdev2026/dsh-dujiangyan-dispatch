@@ -65,7 +65,9 @@ export async function preflightWorkspace(
   run: (dir: string) => Promise<string> = icacls,
 ): Promise<PreflightIssue[]> {
   if (platform !== 'win32' || permissionPreset !== 'workspace-write') return []
-  const dirs = listDirs(cwd, 3, 200)
+  // The working directory itself first: one created outside the sandbox (by the orchestrator, or by
+  // an older session) is the common case (findings 45, 52).
+  const dirs = [cwd, ...listDirs(cwd, 3, 200)]
   const issues: PreflightIssue[] = []
   for (let i = 0; i < dirs.length; i += 8) {
     const batch = dirs.slice(i, i + 8)

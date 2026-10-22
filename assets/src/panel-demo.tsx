@@ -81,7 +81,7 @@ const events = [
   ev(3, 'task/done', { taskId: 'task-9', summary: { changes: L('6/6 通过', '6/6 pass') } }),
 ]
 const snapshot = {
-  version: '0.1.1', now: new Date(now).toISOString(), workspaceRoots: ['D:/work/my-app'],
+  version: '0.2.0', now: new Date(now).toISOString(), workspaceRoots: ['D:/work/my-app'],
   limits: { maxSessions: 0, maxActiveSessions: 0, approvalTimeoutMs: 900000 },
   sessions, tasks, approvals,
   leases: [{ name: 'bench', holder: 'task-0', queued: 1 }],

@@ -10,8 +10,9 @@ import type { LeaseManager } from './locks.ts';
 import type { DispatchRegistry } from './registry.ts';
 import { type SessionManager } from './sessions.ts';
 import type { TaskManager } from './tasks.ts';
+import { type QuietSwitch } from './quiet.ts';
 import type { Watchdog } from './watchdog.ts';
-export declare const VERSION = "0.1.1";
+export declare const VERSION = "0.2.0";
 export interface McpDeps {
     readonly ctx: HostContext;
     readonly config: ResolvedConfig;
@@ -31,9 +32,13 @@ export interface McpDeps {
     /** Liveness alarms (approval aging, AI judge health, stalled tasks, orchestrator presence). */
     readonly watchdog?: Watchdog;
     /** Last authenticated MCP request, so the watchdog can tell when no orchestrator is watching. */
+    /** `lastSeenAt`: any MCP request (orchestrator presence). `approverAt`: it listed or decided approvals. */
     readonly presence?: {
         lastSeenAt: number | undefined;
+        approverAt?: number;
     };
+    /** The orchestrator's quiet-mode switch. */
+    readonly quiet?: QuietSwitch;
 }
 export declare function startMcpServer(deps: McpDeps): {
     url: string;

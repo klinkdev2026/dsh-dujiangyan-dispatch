@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from './config.ts';
+import type { EvidenceRecorder, TaskEvidence } from './evidence.ts';
 import type { EventLog } from './events.ts';
 import { type HostContext } from './host.ts';
 import type { UsageMeter } from './llm-hooks.ts';
@@ -48,12 +49,28 @@ export interface TaskRecord {
     attention?: string;
     /** The worker's latest narration (tail of its last assistant text), so a reviewer sees what it is doing. */
     latest?: string;
+    /** Steps that waited for an approver who never answered (e.g. overnight); the worker was told to skip them. */
+    blocked?: BlockedStep[];
+    /** What the gate saw this task run: calls let through or refused, their outcomes, build and test runs. */
+    evidence?: TaskEvidence;
 }
+export interface BlockedStep {
+    readonly tool: string;
+    readonly rule: string;
+    /** Bounded, secret-free summary of the call. */
+    readonly summary: string;
+    readonly firstAt: string;
+    timeouts: number;
+    lastAt: string;
+}
+export type BenchMode = 'command' | 'task' | 'shared';
 export declare class TaskManager {
     private readonly tasks;
     private readonly chains;
     private readonly controllers;
     private readonly running;
+    /** Root session → the task whose turn the plugin stopped (cancel, needs_input, needs_attention) and when. */
+    private readonly stopped;
     private readonly file;
     private lastStartAt;
     private leaderStartAt;
@@ -66,6 +83,7 @@ export declare class TaskManager {
     private readonly usage;
     private readonly localFacts;
     private stopping;
+    private readonly evidence;
     /** Outcome decided outside the turn (a question, the deny breaker); applied when the turn unwinds. */
     private readonly endings;
     constructor(deps: {
@@ -78,6 +96,8 @@ export declare class TaskManager {
         usage: UsageMeter;
         /** Extra environment facts from the personal rules file for a session's working directory. */
         localFacts?: (cwd: string | undefined) => readonly string[];
+        /** Gate-recorded evidence; a finished task keeps its own. */
+        evidence?: EvidenceRecorder;
     });
     submit(input: {
         sessionId: string;
@@ -107,6 +127,15 @@ export declare class TaskManager {
         windowDenies: number;
         lastRule: string;
     }): void;
+    /** The session's route cannot work (e.g. it renames tools) and no healthy route is left: end the running task as an error. */
+    failRunning(rootSessionId: string, note: string): void;
+    /** Record a step that timed out waiting for an approver, so the morning view lists what is missing. */
+    noteBlocked(rootSessionId: string, taskId: string | undefined, step: {
+        tool: string;
+        rule: string;
+        summary: string;
+        fingerprint: string;
+    }): void;
     private endTurn;
     /**
      * Deliver a message into the running worker's next model step (prior art: dsh-agent-teams
@@ -119,8 +148,23 @@ export declare class TaskManager {
     /** Whether `steer()` can reach this session right now (used to refuse a note before deciding). */
     canSteer(sessionId: string): boolean;
     /** Resources held by the task running on a root session (gate uses this for the bench rule). */
+    /**
+     * The bench rights of the task running on a root session: `command` (resource `bench`: the
+     * machine is held only while a benchmark command runs), `task` (`bench:task`: the whole task holds
+     * it), `shared` (`bench:shared`: may run benchmarks, holds nothing, results may be noisy).
+     */
+    benchMode(rootSessionId: string): BenchMode | undefined;
     heldResources(rootSessionId: string): readonly string[];
     runningTask(rootSessionId: string): string | undefined;
+    /**
+     * The task whose turn the plugin stopped on this idle session less than `withinMs` ago. A call
+     * arriving then comes from a turn that should have ended (findings 58), not from a person
+     * typing in the session later.
+     */
+    stoppedTask(rootSessionId: string, withinMs?: number): {
+        taskId: string;
+        status: TaskStatus;
+    } | undefined;
     /** The running task on a root session and the worker's latest assistant text (for approval context). */
     approvalContextFor(rootSessionId: string): {
         id: string;
@@ -143,15 +187,13 @@ export declare class TaskManager {
     private waitForRun;
     private onSessionEvent;
     private resultOf;
+    /** A finished task takes its evidence out of the recorder into its own record. */
+    private attachEvidence;
+    /** The task record, with the live evidence while it still runs. */
+    view(taskId: string): TaskRecord | undefined;
     private update;
     private persist;
 }
-/**
- * The same shape `createUserMessage` (dsh-llm 0.2.1-rc.2) builds: a detached,
- * frozen message with a fresh id. Built locally so the plugin carries no
- * runtime dependency on a host package that a `link:` install might resolve
- * to a second copy.
- */
 export declare function userMessage(text: string, taskId: string): unknown;
 /** The last `{changes, verification, leftovers}` JSON object in the text (also accepts 改动/验证/遗留). */
 export declare function parseSummary(text: string): TaskResult['summary'];

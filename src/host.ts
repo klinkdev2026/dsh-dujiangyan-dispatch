@@ -132,6 +132,7 @@ export interface HostContext {
       maxTokens?: number
       temperature?: number
       reasoningEffort?: string
+      tools?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
       signal?: AbortSignal
     }): AsyncIterable<StreamChunk>
     /** Exact-route model metadata, including the selectable reasoning efforts (least first). */
@@ -142,6 +143,11 @@ export interface HostContext {
 export interface PermissionPresets {
   set(session: HostSession, name: string): void
   current(session: HostSession): string
+}
+
+/** Host sandbox policy (dsh-sandbox-policy): the effective mode of a session's calls. */
+export interface SandboxPolicyService {
+  resolve(request: { session?: HostSession }): { readonly mode?: string }
 }
 
 export interface ApprovalService {

@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/klinkdev2026/dsh-dujiangyan-dispatch/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/klinkdev2026/dsh-dujiangyan-dispatch/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.1.1-0B7285?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-0.2.0-0B7285?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/DeepSeek%20Harness-%E2%89%A50.2.1--rc.2-4D8DFF?style=flat-square" alt="DeepSeek Harness >= 0.2.1-rc.2">
   <img src="https://img.shields.io/badge/MCP-Streamable%20HTTP-5FE0C0?style=flat-square" alt="MCP">
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-6F93A6?style=flat-square" alt="platforms">
@@ -64,10 +64,10 @@
 
 - **每一次工具调用都过闸门**，包括 worker 拉起的子 agent，以及工具内部申请的沙箱提权。
 - **拒绝是建议，不是一堵墙。** worker 会收到理由（比如“写到了工作区以外”“请用 bench 锁”），会改用正确的做法，而不是绕过闸门。一直被拒的 worker 会被“拒绝熔断”暂停。
-- **灰色调用可以先交给 AI 评审（需手动开启）。** 评审必须全体一致，默认是两个：都说放行才放行，都说拒绝才拒绝，其余情况一律交给人，并附上每个评审的意见。调用内容用随机标记圈成“数据”，里面夹带的提示词注入不起作用；密钥会被屏蔽；每个会话有评审次数预算。网络和对外操作、工作区以外的任何东西、编码过的命令、放宽沙箱，**永远不交给 AI 判断**。
+- **灰色调用可以先交给 AI 评审（需手动开启）。** 评审必须全体一致。评审取自你的角色表（有两个不同模型就用两个；建议配两家厂商，才算真正的交叉审查）：都说放行才放行，都说拒绝才拒绝，其余情况一律交给人，并附上每个评审的意见。调用内容用随机标记圈成“数据”，里面夹带的提示词注入不起作用；密钥会被屏蔽；每个会话有评审次数预算。网络和对外操作、工作区以外的任何东西、编码过的命令、放宽沙箱，**永远不交给 AI 判断**。
 - **人工审批时信息齐全**：是哪个任务、worker 自己怎么解释、这次调用的说明、这个任务之前被拦过的调用，还有一个“打开会话”按钮可以看完整记录。
-- **没有任何东西在悄悄等。** 看门狗会告诉正在等待的 worker 别改写调用；审批等得越久告警越高；任务卡住、指挥方不在、AI 评审出错都会报告；面板会弹出桌面通知。超时后调用被拒绝并提示“原样重新提交”，而不是变成一个让人看不懂的桌面弹窗。
-- **静默模式**让基准测试测得准：一个任务拿着 `bench` 锁时，其他会话的重型编译和测试会等着。
+- **没有任何东西在悄悄等。** 看门狗会告诉正在等待的 worker 别改写调用；审批等得越久告警越高；任务卡住、指挥方不在、AI 评审出错都会报告；面板会弹出桌面通知。没人答复时（比如夜里），worker 先跳过这一步，再把它列为“等审批”并继续往下做，不会一遍遍等满超时。
+- **静默模式**让基准测试测得准：基准测试占着机器时，其他会话的重型编译和测试会等着；默认只在基准测试命令执行期间占用。
 - **你自己的规则，热加载。** 个人的放行/拒绝规则、提示、环境事实和 AI 设置写在 `~/.dsh/dujiangyan/local-rules.json`，保存即生效，不用重启，也不用等发版。worker 改不了这个文件。
 
 > **别人修大坝，大坝会溃；我们修都江堰。**
@@ -173,7 +173,7 @@ agent 会先调用 `djy_guide` 读使用手册，然后创建会话、提交任�
 
 | 档位 | 内容 |
 |---|---|
-| ✅ **自动放行** | 读文件、搜索；在会话的写入范围内写和改文件；`cargo` / `python` / `node` / `cmake` 等构建运行；`git status/diff/add/commit` 等本地操作；只读的 shell 命令；工作区里自己的脚本 |
+| ✅ **自动放行** | 读文件、搜索；在会话的写入范围内写和改文件；`cargo` / `python` / `node` / `cmake` 等构建运行；`git status/diff/add/commit` 等本地操作；只读的 shell 命令；工作区里自己的脚本和程序，包括命令里等待其结束（`-Wait` 或 `$p.WaitForExit(ms)`）的 `Start-Process`；`$env:TEMP` 下的临时文件；本命令定义的函数，或从工作区脚本 dot-source 进来的函数；你在 `local-rules.json` 里列出的程序和 `PATH` 追加项 |
 | ⛔ **拒绝，并告诉 agent 为什么** | 写工作区以外，或写出本会话的写入范围；读凭据文件、打印含 key 的环境变量；全局或系统级安装；改注册表、`setx`；**改 ACL、完整性标签或沙箱设置**（属于环境问题，应交给你处理）；`git push`、改远程仓库；向外上传数据；`run_code`（它的程序体不经过闸门）；agent 自行拉起子 agent；改插件或 Harness 配置（包括 `local-rules.json`）；没拿到 bench 锁就跑基准测试 |
 | ❓ **拦下待审批** | 其余所有调用：网络访问、`pip/npm install`、`git clone`、动态执行代码、目标无法确定的删除、不认识的命令 |
 
@@ -183,7 +183,15 @@ agent 会先调用 `djy_guide` 读使用手册，然后创建会话、提交任�
 2. **接入的 AI 客户端**（指挥方），它应当自己核实，而不是相信 worker 的说法；
 3. **你自己**，在面板上点一下。
 
-**审批超时**（默认 15 分钟）后，调用被拒绝，并提示“原样重新提交同一个调用”；宿主随后针对同一调用弹出的沙箱提权请求也会被拒绝，这样被拒的调用不会被人误当成沙箱提权批准掉。如果希望超时后把根会话的调用交给桌面版自己的审批弹窗，设置 `fallbackToHuman: true`。
+**审批超时**（默认 15 分钟）后，调用被安全地拒绝；宿主随后针对同一调用弹出的沙箱提权请求也会被拒绝，这样被拒的调用不会被人误当成沙箱提权批准掉。超时往往是因为没人在（比如夜里），所以同一个调用不会一遍遍地等：
+
+| 同一任务里的同一个调用 | worker 收到的提示 |
+|---|---|
+| 第 1 次超时 | 先做任务里不依赖这一步的部分，快结束时再原样提交一次 |
+| 第 2 次超时 | 不要再提交；在 `leftovers` 里写成 `BLOCKED-ON-APPROVAL`，然后做完其余部分或收尾（这一步记入任务的 `blocked` 列表） |
+| 之后 | 立即拒绝（`approval-unavailable`），不再等 |
+
+只要你或指挥方做出任何决定，或者超时之后有任何 MCP 调用，这个调用就重新计数。如果希望超时后把根会话的调用交给桌面版自己的审批弹窗，设置 `fallbackToHuman: true`。
 
 **拒绝熔断。** 连续 3 次被闸门或 AI 拒绝（或最近 10 次中有 6 次被拒），任务会暂停为 `needs_attention`，免得 worker 换着说法反复尝试同一件被拒的事、白白烧轮次。你或指挥方的拒绝属于指导，不计入。
 
@@ -199,7 +207,7 @@ agent 会先调用 `djy_guide` 读使用手册，然后创建会话、提交任�
 - **输入经过加固。** worker 写的所有内容都放在两个带随机码的标记之间，并明确告诉评审不要执行其中的任何指令。密钥被屏蔽，过长的字段被截断。
 - **预算。** 每个会话任意 10 分钟内最多 20 次评审（可调）；超出预算，调用等人决定。
 - **永远不交给 AI 的：** 网络和对外操作（抓取网页、网页搜索、git 网络操作、安装包、MCP 工具）、工作区以外的任何东西、编码过的命令、改加载器环境、放宽沙箱、被截断的调用，以及所有拒绝。
-- 启动时会探测每个评审；一个评审持续出错会触发严重告警（“现在每次审批都需要人”）。可以用 `djy_ai_approval_set` 在运行时开关 AI 评审。
+- 启动时会探测每个评审；一个评审持续出错会触发严重告警（“现在每次审批都需要人”）。可以用 `djy_ai_approval_set` 在运行时开关 AI 评审、换掉出问题的评审模型（新评审先探测，通过才换，重启后保留；不像改配置文件那样打断正在跑的任务）。评审模型可以按会话设（`djy_session_create` 的 `judges`，或 `djy_ai_approval_set` 带 `sessionId`）、按批次设（`batch`）、按文件夹设（`local-rules.json` 里 `workspaces[根目录].aiApproval.judges`），越具体的优先，都没有就用全局的。
 
 ### 没有任何东西在悄悄等
 
@@ -232,7 +240,17 @@ agent 会先调用 `djy_guide` 读使用手册，然后创建会话、提交任�
 - 连续 5 次被限流或过载就熔断 2 分钟：期间请求沿模型链切到备用模型；冷却结束后先放一个请求试探，成功就切回首选模型。
 - 每分钟请求数（RPM）限制、错峰预热默认关闭，需要时可以打开。
 
-**bench 锁和静默模式。** 用 `resources: ["bench"]` 提交的任务会独占机器，没有这把锁就不能跑基准测试。锁被占用期间，其他会话的重型命令（`cargo build/test/…`、`npm/pnpm/yarn test/build`，以及你自己加的规则）会等着，即使已经被批准也一样。等满 30 分钟后，它们会以 `quiet-timeout` 转交审批。
+**bench 权限和静默模式。** 任务没有声明 bench 权限，就不能跑基准测试命令：
+
+| `resources` | 什么时候占用机器 | 其他会话 |
+|---|---|---|
+| `["bench"]` | 只在基准测试命令执行期间：开跑前先等其他会话正在跑的重型命令结束，命令结果一回来就释放 | 这个任务准备数据、写报告时，别人照常编译和测试 |
+| `["bench:task"]` | 整个任务期间 | 等整个任务结束 |
+| `["bench:shared"]` | 不占用 | 不受影响；测量结果可能有噪声 |
+
+机器被占用期间，其他会话的重型命令（`cargo build/test/…`、`npm/pnpm/yarn test/build`，以及你自己加的规则）会等着，即使已经被批准也一样。等满 30 分钟后，它们会以 `quiet-timeout` 转交审批。`djy_quiet_set` 可以临时打开或关闭静默模式（有审计，到期自动恢复），不用改 `local-rules.json`。
+
+**执行证据。** 闸门会记下每个任务实际执行了什么：放行、批准、拒绝的调用数，最近的命令和退出码，构建、测试、lint 的运行结果和测试框架的汇总行（`cargo test | Select-String …` 这种管道写法即使退出码是 0，只要汇总里有失败，也记为失败）。`djy_task_get` 在 `evidence` 字段里返回这些记录，和 worker 自己写的 `verification` 放在一起，供你比对。
 
 ## 鱼嘴：多模型路由
 
@@ -245,7 +263,7 @@ roster:
     - { provider: my-gateway, model: qwen-coder }          # 备用
   reviewer:
     - { provider: another-vendor, model: their-model }     # 用另一家厂商的模型审核
-    - { provider: deepseek-official, model: deepseek-v4-pro }
+    - { provider: deepseek-official, model: deepseek-flash }
 ```
 
 - 模型链里的 provider 和模型，就是你在桌面版里已经配好的那些，不用再配一遍 key。可以用 `djy_models` 查看。
@@ -319,7 +337,7 @@ roster:
 | `workspaceRoots` | `[]` | **必填。** agent 可以写入的目录 |
 | `host` / `port` | `127.0.0.1` / `8790` | MCP 服务的监听地址 |
 | `stateDir` | `~/.dsh/dujiangyan` | 令牌、审计日志、任务、锁文件和 `local-rules.json` 的位置 |
-| `roster` | implementer → `deepseek-official/deepseek-flash`；reviewer、planner → `deepseek-official/deepseek-v4-pro` | 每个角色的模型链 |
+| `roster` | 所有角色 → `deepseek-official/deepseek-flash` | 每个角色的模型链 |
 | `limits.defaults` / `limits.providers.<id>` | 见[宝瓶口](#宝瓶口准入控制) | `maxConcurrent`、`rpm`、`minSpacingMs`、`jitterMs`、`increaseAfter`、`breakerThreshold`、`breakerCooldownMs` |
 | `permissionPreset` | `workspace-write` | 工人会话的权限预设 |
 | `agentPreset` | `standard` | 工人会话挂载的 agent 预设 |
@@ -360,7 +378,9 @@ roster:
   "rules": {
     "allowCommands": ["mytool"],
     "denyPatterns": ["\\bdrop\\s+database\\b"],
-    "benchPatterns": ["run_bench\\.sh"]
+    "benchPatterns": ["run_bench\\.sh"],
+    "allowEnv": [{ "name": "PATH", "prepend": ["C:/Python313"] }],
+    "allowPrograms": [{ "path": "C:/Apps/KLayout/klayout_app.exe", "args": "^-b\\b", "scriptFlag": "-r" }]
   },
   "hints": [
     { "match": "\\bcurl\\b", "tool": "bash", "reason": "这里不能联网：把 URL 写进 leftovers，会有人替你下载。" }
@@ -376,10 +396,11 @@ roster:
 
 | 键 | 说明 |
 |---|---|
-| `rules` | 额外的 `allowCommands`、`denyPatterns`、`benchPatterns` |
+| `rules` | 额外的 `allowCommands`、`denyPatterns`、`benchPatterns`；`allowEnv`：允许修改的加载类环境变量，如 `PATH`（`prepend`/`append`：允许加到当前值前面或后面的目录；`values`：允许的精确值）；`allowPrograms`：允许运行的工作区外程序，按 `path` 精确匹配（`args`：参数行必须匹配的正则；`scriptFlag` 后面的脚本必须在工作区内） |
 | `hints` | 把一个本来要等审批的调用，改成拒绝并给出正确的建议（`match` 是不区分大小写的正则，`tool` 可选）。提示永远不会放行任何东西 |
 | `facts` | 追加到任务提示词环境事实里的内容（AI 评审也能看到） |
-| `workspaces` | 只在某个工作区根目录内生效的 `rules`、`hints`、`facts` |
+| `workspaceRoots` | 额外的工作区根目录，和配置文件里的合并，保存即生效、不用重启，适合一个编排者在多个项目文件夹里派工人（仅顶层）。整个盘符、用户主目录、包含插件数据目录的文件夹会被拒绝 |
+| `workspaces` | 只在某个工作区根目录内生效的 `rules`、`hints`、`facts`、`aiApproval.judges` |
 | `aiApproval` | 覆盖配置文件里的设置（仅顶层） |
 | `quietMode` | 覆盖配置文件里的设置；`patterns` 会追加到配置文件的规则后面 |
 
@@ -403,9 +424,10 @@ roster:
 | `djy_questions_list` | worker 提出的问题（状态为 `needs_input` 的任务） |
 | `djy_events_watch` | 按游标和 epoch 长轮询事件流 |
 | `djy_approvals_list` / `djy_approval_decide` | 查看被拦下的调用（含上下文和 AI 意见）、做出决定（先到先得），可附带给 worker 的 `note` |
-| `djy_ai_approval_get` / `djy_ai_approval_set` | AI 评审的状态、评审名单、可评审的规则和评审健康；运行时开关 |
+| `djy_ai_approval_get` / `djy_ai_approval_set` | AI 评审的状态、评审名单、可评审的规则和评审健康；运行时开关、更换评审模型 |
 | `djy_rules_get` / `djy_rules_reload` | 查看 `local-rules.json` 以及某个目录下实际生效的规则；立即重新加载 |
 | `djy_locks_list` | 查看锁和排队情况 |
+| `djy_quiet_set` | 临时打开或关闭静默模式，或用 `clear` 恢复配置（有审计，到期自动恢复） |
 
 ## 安全
 

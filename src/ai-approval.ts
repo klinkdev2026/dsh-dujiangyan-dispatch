@@ -19,6 +19,7 @@
 import { randomBytes } from 'node:crypto'
 import type { ApprovalContext } from './approval-context.ts'
 import type { HostContext, StreamChunk } from './host.ts'
+import { readJson, writeJsonAtomic } from './store.ts'
 
 export interface Judge {
   readonly provider: string
@@ -311,6 +312,20 @@ export async function probeJudges(ctx: HostContext, config: AiApprovalConfig, si
 }
 
 /** The effective AI-approval setting: profile config, then the hot-reloaded file, then a runtime toggle. */
+/** Where the judges in force come from, most specific first. */
+export type JudgesSource = 'session' | 'workspace' | 'runtime' | 'local-rules' | 'profile'
+
+/** Judges that apply to one dispatched session only: its own, or its folder's (`local-rules.json` workspaces). */
+export interface ScopedJudges {
+  readonly judges: readonly Judge[]
+  readonly source: 'session' | 'workspace'
+}
+
+export const isJudge = (j: unknown): j is Judge => {
+  const o = j as Record<string, unknown> | null
+  return o !== null && typeof o === 'object' && typeof o['provider'] === 'string' && typeof o['model'] === 'string' && (o['effort'] === undefined || typeof o['effort'] === 'string')
+}
+
 export class AiApproval {
   private override: boolean | undefined
   private readonly base: () => AiApprovalConfig
@@ -320,9 +335,30 @@ export class AiApproval {
   /** Called when a judge turns degraded or recovers (events, audit, panel). */
   onHealthChange: ((change: { judge: string; degraded: boolean; health: JudgeHealth }) => void) | undefined
 
-  constructor(base: () => AiApprovalConfig, local: () => Partial<AiApprovalConfig> | undefined) {
+  /** Judges chosen at runtime (`djy_ai_approval_set`), kept in the plugin data dir across restarts. */
+  private judgesOverride: readonly Judge[] | undefined
+  private readonly judgesFile: string | undefined
+
+  private readonly scoped: ((root: string) => ScopedJudges | undefined) | undefined
+
+  private readonly scopedInUse: (() => readonly Judge[]) | undefined
+
+  constructor(base: () => AiApprovalConfig, local: () => Partial<AiApprovalConfig> | undefined, judgesFile?: string, scoped?: (root: string) => ScopedJudges | undefined, scopedInUse?: () => readonly Judge[]) {
     this.base = base
     this.local = local
+    this.judgesFile = judgesFile
+    this.scoped = scoped
+    this.scopedInUse = scopedInUse
+    if (judgesFile !== undefined) {
+      const saved = readJson<{ judges?: unknown }>(judgesFile, {}).judges
+      if (Array.isArray(saved) && saved.length > 0 && saved.every(isJudge)) this.judgesOverride = saved
+    }
+  }
+
+  /** Replace the judges at runtime (no profile edit, so no desktop reload); `undefined` returns to the configured ones. */
+  setJudges(judges: readonly Judge[] | undefined): void {
+    this.judgesOverride = judges
+    if (this.judgesFile !== undefined) writeJsonAtomic(this.judgesFile, judges === undefined ? {} : { judges, at: new Date().toISOString() })
   }
 
   /** Record one judge's answer: an error extends its failure streak, any decision clears it. */
@@ -347,18 +383,34 @@ export class AiApproval {
     if ((before?.degraded ?? false) !== health.degraded) this.onHealthChange?.({ judge: opinion.judge, degraded: health.degraded, health })
   }
 
-  /** Health of the configured judges (unchecked judges are listed as not yet checked). */
+  /** Every judge in force somewhere: the global ones and those of sessions, batches and folders. */
+  inUse(): Judge[] {
+    const all = [...this.current().judges, ...this.scopedInUse?.() ?? []]
+    return all.filter((j, i) => all.findIndex(k => judgeKey(k) === judgeKey(j)) === i)
+  }
+
+  /**
+   * Health of every judge in use (unchecked judges are listed as not yet checked), so a dead
+   * session judge is reported like a dead global one (review S2).
+   */
   health(): { readonly degraded: boolean; readonly judges: ReadonlyArray<JudgeHealth | { readonly judge: string; readonly unchecked: true }> } {
-    const judges = this.current().judges.map(j => this.judgeHealth.get(judgeKey(j)) ?? { judge: judgeKey(j), unchecked: true as const })
+    const judges = this.inUse().map(j => this.judgeHealth.get(judgeKey(j)) ?? { judge: judgeKey(j), unchecked: true as const })
     return { degraded: judges.some(j => 'degraded' in j && j.degraded), judges }
   }
 
-  current(): AiApprovalConfig & { readonly source: 'profile' | 'local-rules' | 'runtime' } {
+  /**
+   * The effective setting; with a dispatch root, that session's own judges (or its folder's) win
+   * over the global ones, so orchestrators working in different folders can each pick theirs.
+   */
+  current(root?: string): AiApprovalConfig & { readonly source: 'profile' | 'local-rules' | 'runtime'; readonly judgesSource: JudgesSource } {
     const base = this.base()
     const local = this.local()
-    const merged: AiApprovalConfig = { ...base, ...local, scope: 'wide' }
-    if (this.override !== undefined) return { ...merged, enabled: this.override, source: 'runtime' }
-    return { ...merged, source: local?.enabled !== undefined ? 'local-rules' : 'profile' }
+    const scoped = root !== undefined ? this.scoped?.(root) : undefined
+    const judges = scoped?.judges ?? this.judgesOverride
+    const merged: AiApprovalConfig = { ...base, ...local, ...judges !== undefined ? { judges } : {}, scope: 'wide' }
+    const judgesSource: JudgesSource = scoped !== undefined ? scoped.source : this.judgesOverride !== undefined ? 'runtime' : local?.judges !== undefined ? 'local-rules' : 'profile'
+    if (this.override !== undefined) return { ...merged, enabled: this.override, source: 'runtime', judgesSource }
+    return { ...merged, source: local?.enabled !== undefined ? 'local-rules' : 'profile', judgesSource }
   }
 
   /** Runtime toggle (in memory); `undefined` returns to the configured value. */

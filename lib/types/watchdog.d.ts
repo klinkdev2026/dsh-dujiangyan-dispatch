@@ -56,6 +56,11 @@ export interface WatchdogDeps {
     readonly lastClientSeen: () => number | undefined;
     readonly now?: () => number;
 }
+/**
+ * The longest wait a tool call's own timeout may excuse. The timeout comes from the worker's
+ * arguments, so without a cap a huge value would silence the stall alarm (Kimi review, 2026-10-19).
+ */
+export declare const MAX_KNOWN_WAIT_MS: number;
 export declare class Watchdog {
     private readonly d;
     private readonly now;

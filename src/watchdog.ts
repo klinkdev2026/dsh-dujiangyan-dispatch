@@ -52,7 +52,13 @@ export interface WatchdogDeps {
 
 interface Activity { at: number; waitUntil?: number; waitReason?: string }
 
-/** Tool calls that legitimately block for a long time; their own timeout bounds the wait. */
+/**
+ * The longest wait a tool call's own timeout may excuse. The timeout comes from the worker's
+ * arguments, so without a cap a huge value would silence the stall alarm (Kimi review, 2026-10-19).
+ */
+export const MAX_KNOWN_WAIT_MS = 60 * 60_000
+
+/** Tool calls that legitimately block for a long time; their own timeout (capped) bounds the wait. */
 function knownWait(tool: unknown, rawArgs: unknown): { reason: string; ms: number } | undefined {
   if (typeof rawArgs !== 'string') return undefined
   let args: Record<string, unknown>
@@ -63,10 +69,10 @@ function knownWait(tool: unknown, rawArgs: unknown): { reason: string; ms: numbe
   }
   if (tool === 'job_output' && args['wait'] === true) {
     const ms = typeof args['timeout_ms'] === 'number' ? args['timeout_ms'] : 10 * 60_000
-    return { reason: `waiting on background job ${String(args['job_id'] ?? '')} (job_output wait)`, ms }
+    return { reason: `waiting on background job ${String(args['job_id'] ?? '')} (job_output wait)`, ms: Math.min(ms, MAX_KNOWN_WAIT_MS) }
   }
   if (typeof args['timeoutMs'] === 'number' && args['timeoutMs'] > 60_000) {
-    return { reason: `long ${String(tool)} call (timeout ${Math.round(args['timeoutMs'] / 60_000)} min): ${String(args['description'] ?? '').slice(0, 80)}`, ms: args['timeoutMs'] }
+    return { reason: `long ${String(tool)} call (timeout ${Math.round(args['timeoutMs'] / 60_000)} min): ${String(args['description'] ?? '').slice(0, 80)}`, ms: Math.min(args['timeoutMs'], MAX_KNOWN_WAIT_MS) }
   }
   return undefined
 }

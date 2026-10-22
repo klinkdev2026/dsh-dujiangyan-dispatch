@@ -94,6 +94,14 @@ export interface JudgeHealth {
  */
 export declare function probeJudges(ctx: HostContext, config: AiApprovalConfig, signal?: AbortSignal): Promise<AiOpinion[]>;
 /** The effective AI-approval setting: profile config, then the hot-reloaded file, then a runtime toggle. */
+/** Where the judges in force come from, most specific first. */
+export type JudgesSource = 'session' | 'workspace' | 'runtime' | 'local-rules' | 'profile';
+/** Judges that apply to one dispatched session only: its own, or its folder's (`local-rules.json` workspaces). */
+export interface ScopedJudges {
+    readonly judges: readonly Judge[];
+    readonly source: 'session' | 'workspace';
+}
+export declare const isJudge: (j: unknown) => j is Judge;
 export declare class AiApproval {
     private override;
     private readonly base;
@@ -106,10 +114,22 @@ export declare class AiApproval {
         degraded: boolean;
         health: JudgeHealth;
     }) => void) | undefined;
-    constructor(base: () => AiApprovalConfig, local: () => Partial<AiApprovalConfig> | undefined);
+    /** Judges chosen at runtime (`djy_ai_approval_set`), kept in the plugin data dir across restarts. */
+    private judgesOverride;
+    private readonly judgesFile;
+    private readonly scoped;
+    private readonly scopedInUse;
+    constructor(base: () => AiApprovalConfig, local: () => Partial<AiApprovalConfig> | undefined, judgesFile?: string, scoped?: (root: string) => ScopedJudges | undefined, scopedInUse?: () => readonly Judge[]);
+    /** Replace the judges at runtime (no profile edit, so no desktop reload); `undefined` returns to the configured ones. */
+    setJudges(judges: readonly Judge[] | undefined): void;
     /** Record one judge's answer: an error extends its failure streak, any decision clears it. */
     record(opinion: AiOpinion, source: 'probe' | 'live', now?: Date): void;
-    /** Health of the configured judges (unchecked judges are listed as not yet checked). */
+    /** Every judge in force somewhere: the global ones and those of sessions, batches and folders. */
+    inUse(): Judge[];
+    /**
+     * Health of every judge in use (unchecked judges are listed as not yet checked), so a dead
+     * session judge is reported like a dead global one (review S2).
+     */
     health(): {
         readonly degraded: boolean;
         readonly judges: ReadonlyArray<JudgeHealth | {
@@ -117,8 +137,13 @@ export declare class AiApproval {
             readonly unchecked: true;
         }>;
     };
-    current(): AiApprovalConfig & {
+    /**
+     * The effective setting; with a dispatch root, that session's own judges (or its folder's) win
+     * over the global ones, so orchestrators working in different folders can each pick theirs.
+     */
+    current(root?: string): AiApprovalConfig & {
         readonly source: 'profile' | 'local-rules' | 'runtime';
+        readonly judgesSource: JudgesSource;
     };
     /** Runtime toggle (in memory); `undefined` returns to the configured value. */
     setEnabled(enabled: boolean | undefined): void;

@@ -10,6 +10,7 @@ import path from 'node:path'
 import { redactSecrets } from './approvals.ts'
 import type { ResolvedConfig } from './config.ts'
 import { describeFacts, measureFacts } from './environment.ts'
+import type { EvidenceRecorder, TaskEvidence } from './evidence.ts'
 import type { EventLog } from './events.ts'
 import { DISPATCH_CANCEL, type HostContext, type HostSession, type SessionEvent } from './host.ts'
 import type { UsageMeter } from './llm-hooks.ts'
@@ -26,6 +27,10 @@ import { readJson, writeJsonAtomic } from './store.ts'
 export type TaskStatus = 'queued' | 'waiting_resources' | 'waiting_slot' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted' | 'needs_input' | 'needs_attention'
 
 export const FINISHED_STATUSES: ReadonlySet<TaskStatus> = new Set(['done', 'error', 'cancelled', 'interrupted', 'needs_input', 'needs_attention'])
+/** Endings where the plugin cut the turn off; the worker should not call anything afterwards. */
+const STOPPED_STATUSES: ReadonlySet<TaskStatus> = new Set(['cancelled', 'needs_input', 'needs_attention'])
+/** How long after such an ending a call from the idle session is treated as a leftover of that turn. */
+const STRAY_WINDOW_MS = 10 * 60_000
 
 const INTERRUPTED = 'interrupted by plugin stop/restart; partial work may exist — check the workspace and resubmit what is left'
 
@@ -60,9 +65,36 @@ export interface TaskRecord {
   attention?: string
   /** The worker's latest narration (tail of its last assistant text), so a reviewer sees what it is doing. */
   latest?: string
+  /** Steps that waited for an approver who never answered (e.g. overnight); the worker was told to skip them. */
+  blocked?: BlockedStep[]
+  /** What the gate saw this task run: calls let through or refused, their outcomes, build and test runs. */
+  evidence?: TaskEvidence
+}
+
+export interface BlockedStep {
+  readonly tool: string
+  readonly rule: string
+  /** Bounded, secret-free summary of the call. */
+  readonly summary: string
+  readonly firstAt: string
+  timeouts: number
+  lastAt: string
 }
 
 const MAX_TEXT = 8000
+
+export type BenchMode = 'command' | 'task' | 'shared'
+
+/** The lease a declared resource takes for the whole task, if any. */
+function leaseOf(resource: string): string | undefined {
+  if (resource === 'bench' || resource === 'bench:shared') return undefined
+  return resource === 'bench:task' ? 'bench' : resource
+}
+const MAX_BLOCKED = 20
+const PERSISTED_COMMANDS = 40
+/** Fingerprints of blocked steps (kept off the persisted record; after a restart a repeat is listed again). */
+const blockedKeys = new WeakMap<BlockedStep, string>()
+const blockedKey = (b: BlockedStep) => blockedKeys.get(b) ?? `${b.tool}|${b.summary}`
 
 /**
  * Appended to every task prompt. Each line encodes a failure observed in real runs
@@ -71,7 +103,8 @@ const MAX_TEXT = 8000
 const WORKER_FOOTER = [
   '',
   '[dujiangyan] Work only inside the session workspace. Some actions are gated: if a call is denied, read the reason and adapt instead of working around it.',
-  'Do not rewrite a command to get it past the gate (e.g. building a command name or path by string concatenation, or wrapping it in another shell). If a call is held for approval, say why you need it and wait.',
+  'Do not rewrite a command to get it past the gate (e.g. building a command name or path by string concatenation, or wrapping it in another shell). If a call is held for approval, say why you need it and wait: the call itself waits for the decision and returns its result (or the reason it was refused), so never end your turn because something is waiting for approval.',
+  'To run a program with a time limit: $p = Start-Process -FilePath <program> -ArgumentList ... -PassThru -NoNewWindow; $null = $p.Handle; if(-not $p.WaitForExit(<ms>)){ $p.Kill() } else { $p.ExitCode } (an unwaited Start-Process is held for an approver; without reading $p.Handle first, $p.ExitCode stays empty). Scratch files go under $env:TEMP.',
   'Environment problems (permissions, ACLs, missing tools) are reported, not repaired: describe them in "leftovers". Never run icacls/Set-Acl/takeown or change sandbox settings.',
   'If a write is "access denied" inside the workspace on Windows, the directory is probably missing the sandbox integrity label — stop and report the directory path; do not grant yourself permissions.',
   'Benchmarks (cargo bench, bench*.py/ps1/sh, criterion) only run inside tasks that hold the "bench" resource; in other tasks prepare and build, but do not measure.',
@@ -87,6 +120,8 @@ export class TaskManager {
   private readonly chains = new Map<string, Promise<void>>()
   private readonly controllers = new Map<string, AbortController>()
   private readonly running = new Map<string, string>() // root session → task id
+  /** Root session → the task whose turn the plugin stopped (cancel, needs_input, needs_attention) and when. */
+  private readonly stopped = new Map<string, { taskId: string; status: TaskStatus; at: number }>()
   private readonly file: string
   private lastStartAt = 0
   private leaderStartAt = 0
@@ -99,15 +134,19 @@ export class TaskManager {
   private readonly usage: UsageMeter
   private readonly localFacts: (cwd: string | undefined) => readonly string[]
   private stopping = false
+  private readonly evidence: EvidenceRecorder | undefined
   /** Outcome decided outside the turn (a question, the deny breaker); applied when the turn unwinds. */
-  private readonly endings = new Map<string, { status: 'needs_input' | 'needs_attention'; note: string }>()
+  private readonly endings = new Map<string, { status: 'needs_input' | 'needs_attention' | 'error'; note: string }>()
 
   constructor(deps: {
     ctx: HostContext; config: ResolvedConfig; sessions: SessionManager; registry: DispatchRegistry
     leases: LeaseManager; events: EventLog; usage: UsageMeter
     /** Extra environment facts from the personal rules file for a session's working directory. */
     localFacts?: (cwd: string | undefined) => readonly string[]
+    /** Gate-recorded evidence; a finished task keeps its own. */
+    evidence?: EvidenceRecorder
   }) {
+    this.evidence = deps.evidence
     this.ctx = deps.ctx
     this.config = deps.config
     this.sessions = deps.sessions
@@ -187,6 +226,7 @@ export class TaskManager {
         this.events.append('lease/released', { taskId: rec.id, name })
       }
       markInterrupted(rec)
+      this.attachEvidence(rec)
       this.events.append('task/interrupted', { taskId: rec.id, sessionId: rec.sessionId, error: rec.error })
       this.controllers.get(rec.id)?.abort(new Error(INTERRUPTED))
     }
@@ -239,7 +279,34 @@ export class TaskManager {
     this.endTurn(rec, 'needs_attention', rec.attention)
   }
 
-  private endTurn(rec: TaskRecord, status: 'needs_input' | 'needs_attention', note: string): void {
+  /** The session's route cannot work (e.g. it renames tools) and no healthy route is left: end the running task as an error. */
+  failRunning(rootSessionId: string, note: string): void {
+    const id = this.running.get(rootSessionId)
+    const rec = id !== undefined ? this.tasks.get(id) : undefined
+    if (rec === undefined || FINISHED_STATUSES.has(rec.status)) return
+    this.endTurn(rec, 'error', note)
+  }
+
+  /** Record a step that timed out waiting for an approver, so the morning view lists what is missing. */
+  noteBlocked(rootSessionId: string, taskId: string | undefined, step: { tool: string; rule: string; summary: string; fingerprint: string }): void {
+    const id = taskId ?? this.running.get(rootSessionId)
+    const rec = id !== undefined ? this.tasks.get(id) : undefined
+    if (rec === undefined) return
+    const now = new Date().toISOString()
+    const list = rec.blocked ?? (rec.blocked = [])
+    const known = list.find(b => blockedKey(b) === step.fingerprint)
+    if (known !== undefined) {
+      known.timeouts++
+      known.lastAt = now
+    } else if (list.length < MAX_BLOCKED) {
+      const entry: BlockedStep = { tool: step.tool, rule: step.rule, summary: step.summary.slice(0, 500), firstAt: now, timeouts: 1, lastAt: now }
+      blockedKeys.set(entry, step.fingerprint)
+      list.push(entry)
+    }
+    this.persist()
+  }
+
+  private endTurn(rec: TaskRecord, status: 'needs_input' | 'needs_attention' | 'error', note: string): void {
     if (this.endings.has(rec.id)) return
     this.endings.set(rec.id, { status, note })
     void this.sessions.agent(rec.sessionId).then(agent => agent.cancel(DISPATCH_CANCEL)).catch(() => {})
@@ -268,6 +335,17 @@ export class TaskManager {
   }
 
   /** Resources held by the task running on a root session (gate uses this for the bench rule). */
+  /**
+   * The bench rights of the task running on a root session: `command` (resource `bench`: the
+   * machine is held only while a benchmark command runs), `task` (`bench:task`: the whole task holds
+   * it), `shared` (`bench:shared`: may run benchmarks, holds nothing, results may be noisy).
+   */
+  benchMode(rootSessionId: string): BenchMode | undefined {
+    const taskId = this.running.get(rootSessionId)
+    const res = taskId === undefined ? [] : this.tasks.get(taskId)?.resources ?? []
+    return res.includes('bench:task') ? 'task' : res.includes('bench') ? 'command' : res.includes('bench:shared') ? 'shared' : undefined
+  }
+
   heldResources(rootSessionId: string): readonly string[] {
     const taskId = this.running.get(rootSessionId)
     if (taskId === undefined) return []
@@ -277,6 +355,17 @@ export class TaskManager {
 
   runningTask(rootSessionId: string): string | undefined {
     return this.running.get(rootSessionId)
+  }
+
+  /**
+   * The task whose turn the plugin stopped on this idle session less than `withinMs` ago. A call
+   * arriving then comes from a turn that should have ended (findings 58), not from a person
+   * typing in the session later.
+   */
+  stoppedTask(rootSessionId: string, withinMs = STRAY_WINDOW_MS): { taskId: string; status: TaskStatus } | undefined {
+    if (this.running.has(rootSessionId)) return undefined
+    const s = this.stopped.get(rootSessionId)
+    return s !== undefined && Date.now() - s.at < withinMs ? { taskId: s.taskId, status: s.status } : undefined
   }
 
   /** The running task on a root session and the worker's latest assistant text (for approval context). */
@@ -292,9 +381,11 @@ export class TaskManager {
     if (FINISHED_STATUSES.has(rec.status)) return // cancelled while queued
     try {
       if (signal.aborted) throw signal.reason
-      if (rec.resources.length > 0) {
+      // `bench` and `bench:shared` are rights, not task-long leases (the gate takes `bench` per command).
+      const leases = [...new Set(rec.resources.map(leaseOf).filter((n): n is string => n !== undefined))].sort() // sorted order avoids lock-order deadlocks
+      if (leases.length > 0) {
         this.update(rec, { status: 'waiting_resources' })
-        for (const name of [...rec.resources].sort()) { // sorted order avoids lock-order deadlocks
+        for (const name of leases) {
           await this.leases.acquire(name, rec.id, signal)
           rec.holds.push(name)
           this.events.append('lease/acquired', { taskId: rec.id, name })
@@ -304,6 +395,7 @@ export class TaskManager {
       await this.staggerStart(signal)
       const agent = await this.sessions.agent(rec.sessionId)
       this.running.set(rec.sessionId, rec.id)
+      this.stopped.delete(rec.sessionId)
       this.update(rec, { status: 'running', startedAt: new Date().toISOString() })
       const cwd = this.registry.get(rec.sessionId)?.cwd
       const roots = this.config.workspaceRoots.length > 0 ? this.config.workspaceRoots : [cwd ?? process.cwd()]
@@ -330,12 +422,29 @@ export class TaskManager {
         })
         if (signal.aborted) break
       }
+      // A turn cut off by the output-token ceiling (typically one huge file write) is not finished:
+      // ask the worker to continue in smaller pieces instead of reporting the half-done task as done.
+      for (let n = 1; ; n++) {
+        const cut = this.collecting.get(rec.sessionId)
+        if (cut === undefined || cut.endReason !== 'max-tokens' || signal.aborted || rec.status === 'interrupted' || this.endings.has(rec.id)) break
+        if (n > MAX_TOKEN_CONTINUATIONS) {
+          this.endings.set(rec.id, { status: 'needs_attention', note: `the worker's turn hit the output-token limit ${MAX_TOKEN_CONTINUATIONS + 1} times in a row; the task is unfinished` })
+          rec.attention = 'turns keep hitting the output-token limit; split the task or ask for smaller steps'
+          break
+        }
+        cut.endReason = undefined
+        this.events.append('task/continued', { taskId: rec.id, sessionId: rec.sessionId, reason: 'max-tokens', continuation: n })
+        const started = this.waitForRun(agent, signal)
+        agent.followup(userMessage(MAX_TOKENS_CONTINUE, rec.id))
+        await started
+        await agent.whenIdle()
+      }
       if (rec.status === 'interrupted') return // stop() already recorded the outcome
       const c = this.collecting.get(rec.sessionId)
       const ending = this.endings.get(rec.id)
       if (ending !== undefined) {
         rec.result = this.resultOf(c, [ending.note])
-        this.update(rec, { status: ending.status, finishedAt: new Date().toISOString() })
+        this.update(rec, { status: ending.status, ...ending.status === 'error' ? { error: ending.note } : {}, finishedAt: new Date().toISOString() })
         return
       }
       if (c !== undefined && c.assistant.length === 0 && c.errors.some(e => /\babort(ed)?\b|\binterrupt/i.test(e)) && !signal.aborted) {
@@ -355,7 +464,7 @@ export class TaskManager {
       const ending = this.endings.get(rec.id)
       if (ending !== undefined) {
         rec.result = this.resultOf(this.collecting.get(rec.sessionId), [ending.note])
-        this.update(rec, { status: ending.status, finishedAt: new Date().toISOString() })
+        this.update(rec, { status: ending.status, ...ending.status === 'error' ? { error: ending.note } : {}, finishedAt: new Date().toISOString() })
         return
       }
       this.update(rec, {
@@ -367,6 +476,7 @@ export class TaskManager {
       this.collecting.delete(rec.sessionId)
       this.releaseSlot(rec)
       if (this.running.get(rec.sessionId) === rec.id) this.running.delete(rec.sessionId)
+      if (STOPPED_STATUSES.has(rec.status) || this.endings.has(rec.id)) this.stopped.set(rec.sessionId, { taskId: rec.id, status: rec.status, at: Date.now() })
       for (const name of rec.holds) {
         this.leases.release(name, rec.id)
         this.events.append('lease/released', { taskId: rec.id, name })
@@ -439,7 +549,7 @@ export class TaskManager {
     if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait))
   }
 
-  private readonly collecting = new Map<string, { rec: TaskRecord; assistant: string[]; toolCalls: Array<{ name: string; args: string }>; toolResults: number; errors: string[] }>()
+  private readonly collecting = new Map<string, { rec: TaskRecord; assistant: string[]; toolCalls: Array<{ name: string; args: string }>; toolResults: number; errors: string[]; endReason?: string }>()
 
   /** Resolve once the agent reports `running`, an error, or after a grace period (already-running agents). */
   private waitForRun(agent: { session: HostSession; status?: string }, signal: AbortSignal): Promise<void> {
@@ -471,6 +581,9 @@ export class TaskManager {
       const call = { name: String(data['name'] ?? '?'), args: String(data['arguments'] ?? JSON.stringify(data['input'] ?? null)).slice(0, 500) }
       if (c !== undefined && session.id === root) c.toolCalls.push(call)
       this.events.append('task/tool-call', { taskId: c?.rec.id, sessionId: session.id, root, tool: call.name, args: call.args.slice(0, 200) })
+    } else if (event.type === 'turn/end' && c !== undefined && session.id === root) {
+      const kind = (data['reason'] as { kind?: unknown } | null | undefined)?.kind
+      c.endReason = typeof kind === 'string' ? kind : undefined
     } else if (event.type === 'tool/result') {
       if (c !== undefined && session.id === root) c.toolResults++
     } else if (event.type === 'assistant/message' && c !== undefined && session.id === root) {
@@ -494,8 +607,25 @@ export class TaskManager {
     }
   }
 
+  /** A finished task takes its evidence out of the recorder into its own record. */
+  private attachEvidence(rec: TaskRecord): void {
+    const ev = this.evidence?.take(rec.id)
+    if (ev === undefined) return
+    // tasks.json keeps the last 500 tasks: persist only the tail of the command list (all checks stay).
+    rec.evidence = ev.commands.length > PERSISTED_COMMANDS ? { ...ev, commands: ev.commands.slice(-PERSISTED_COMMANDS), truncated: true } : ev
+  }
+
+  /** The task record, with the live evidence while it still runs. */
+  view(taskId: string): TaskRecord | undefined {
+    const rec = this.tasks.get(taskId)
+    if (rec === undefined || rec.evidence !== undefined) return rec
+    const live = this.evidence?.get(taskId)
+    return live === undefined ? rec : { ...rec, evidence: live }
+  }
+
   private update(rec: TaskRecord, patch: Partial<TaskRecord>): void {
     Object.assign(rec, patch)
+    if (FINISHED_STATUSES.has(rec.status)) this.attachEvidence(rec)
     this.persist()
     this.events.append(`task/${rec.status}`, {
       taskId: rec.id,
@@ -535,6 +665,9 @@ function deepFreeze<T>(value: T): T {
  * runtime dependency on a host package that a `link:` install might resolve
  * to a second copy.
  */
+const MAX_TOKEN_CONTINUATIONS = 3
+const MAX_TOKENS_CONTINUE = '[dujiangyan] Your previous reply hit the output-token limit and was cut off, so the task is not finished. Continue from where you stopped. Write large files in several smaller steps (create the file, then append or edit it in pieces) instead of one huge write, and end with the summary the task asks for.'
+
 export function userMessage(text: string, taskId: string): unknown {
   return deepFreeze({
     role: 'user',
@@ -549,12 +682,20 @@ export function userMessage(text: string, taskId: string): unknown {
 
 /** The last `{changes, verification, leftovers}` JSON object in the text (also accepts 改动/验证/遗留). */
 export function parseSummary(text: string): TaskResult['summary'] {
-  const candidates = text.match(/\{[^{}]*\}/g) ?? []
-  for (let i = candidates.length - 1; i >= 0; i--) {
+  // Values may contain braces ("25×{1,20} threads"), so each `{` is matched to its closing brace
+  // outside strings instead of matching brace-free spans.
+  for (let start = text.lastIndexOf('{'); start >= 0; start = start === 0 ? -1 : text.lastIndexOf('{', start - 1)) {
+    const end = closingBrace(text, start)
+    if (end < 0) continue
     try {
-      const obj = JSON.parse(candidates[i] as string) as Record<string, unknown>
+      const obj = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>
+      if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) continue
       const s = (...keys: string[]) => {
-        for (const k of keys) if (typeof obj[k] === 'string') return obj[k] as string
+        for (const k of keys) {
+          const v = obj[k]
+          if (typeof v === 'string') return v
+          if (Array.isArray(v) && v.every((x) => typeof x === 'string')) return v.join('; ')
+        }
         return ''
       }
       const summary = { changes: s('changes', '改动'), verification: s('verification', '验证'), leftovers: s('leftovers', '遗留', 'leftover') }
@@ -564,4 +705,20 @@ export function parseSummary(text: string): TaskResult['summary'] {
     }
   }
   return { changes: '', verification: '', leftovers: '' }
+}
+
+/** Index of the `}` closing the `{` at `start`, skipping braces inside JSON strings; -1 if none. */
+function closingBrace(text: string, start: number): number {
+  let depth = 0
+  let inString = false
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      if (c === '\\') i++
+      else if (c === '"') inString = false
+    } else if (c === '"') inString = true
+    else if (c === '{') depth++
+    else if (c === '}' && --depth === 0) return i
+  }
+  return -1
 }

@@ -142,7 +142,7 @@ export function isDeterministicRouteFailure(failure: unknown): boolean {
 export function installLlmHooks(
   ctx: HostContext,
   deps: { limiter: AdmissionController; usage: UsageMeter; registry: DispatchRegistry; events: EventLog; health: RouteHealth },
-): void {
+): { routeOf(sessionId: string): { provider: string; model: string } | undefined; healthy(e: RouteEntry): boolean } {
   const { limiter, usage, registry, events, health } = deps
   /** The route each dispatched session's latest request actually used (agent/request-error carries no model). */
   const lastRoute = new Map<string, { provider: string; model: string }>()
@@ -241,13 +241,18 @@ export function installLlmHooks(
     lastFailover.set(sessionId, Date.now())
     return { kind: 'retry' as const }
   }, { prepend: true })
+
+  return { routeOf: sessionId => lastRoute.get(sessionId), healthy }
 }
+
+/** The one tool a probe declares; the model is not asked to call it. */
+const PROBE_TOOL = { name: 'noop', description: 'Does nothing. Do not call it.', parameters: { type: 'object', properties: {}, additionalProperties: false } }
 
 /** Probe routes with one tiny real request each; records health and benches deterministic failures. */
 export async function probeRoutes(
   ctx: HostContext,
   health: RouteHealth,
-  routes: ReadonlyArray<{ provider: string; model: string }>,
+  routes: ReadonlyArray<{ provider: string; model: string; effort?: string }>,
   timeoutMs = 60_000,
 ): Promise<Array<{ route: string; ok: boolean; latencyMs: number; detail: string }>> {
   return Promise.all(routes.map(async route => {
@@ -260,6 +265,10 @@ export async function probeRoutes(
         provider: route.provider,
         model: route.model,
         messages: [{ role: 'user', content: [{ type: 'text', text: 'Reply with OK.' }] }],
+        // A worker request always carries tools (and the route's effort); some routes accept a bare
+        // prompt but reject tools, alone or with an effort (findings 49), so the probe sends both.
+        tools: [PROBE_TOOL],
+        ...route.effort !== undefined ? { reasoningEffort: route.effort } : {},
         maxTokens: 64,
         signal,
       })) {
