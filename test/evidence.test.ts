@@ -88,7 +88,7 @@ test('through the gate: allowed and approved calls are recorded with their resul
   t.after(() => clearInterval(keepAlive))
 
   assert.equal((await host.preExecute(agent, 'pwsh', { command: 'cargo test --offline' }, undefined, ok('test result: ok. 3 passed; 0 failed'))).kind, 'allow')
-  assert.equal((await host.preExecute(agent, 'pwsh', { command: 'Remove-Item C:/outside -Recurse' }, undefined, ok())).kind, 'deny')
+  assert.equal((await host.preExecute(agent, 'pwsh', { command: `Remove-Item ${path.join(path.parse(dir).root, 'outside')} -Recurse` }, undefined, ok())).kind, 'deny')
   const held = host.preExecute(agent, 'pwsh', { command: 'git clone https://example.com/x' }, undefined, ok())
   for (let i = 0; i < 50 && approvals.list().length === 0; i++) await sleep(2)
   approvals.decide(approvals.list()[0]?.id ?? '', 'allow', 'public', 'orchestrator')
